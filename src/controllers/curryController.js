@@ -182,3 +182,123 @@ exports.placeCurryOrder = async (req, res) => {
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
+// User: Convert Tokens (Veg <-> NonVeg)
+exports.convertTokens = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { fromDiet, toDiet, tokensToConvert } = req.body;
+
+    if (!fromDiet || !toDiet || !tokensToConvert || tokensToConvert <= 0) {
+      return res
+        .status(400)
+        .json({ error: { message: "Invalid conversion parameters" } });
+    }
+
+    // 1. Get Source Wallet
+    const sourceWallet = await prisma.curryWallet.findUnique({
+      where: { userId_dietType: { userId, dietType: fromDiet } },
+    });
+
+    if (!sourceWallet) {
+      return res
+        .status(404)
+        .json({ error: { message: "Source wallet not found" } });
+    }
+
+    const available = sourceWallet.totalTokens - sourceWallet.usedTokens;
+    if (available < tokensToConvert) {
+      return res
+        .status(400)
+        .json({ error: { message: "Insufficient tokens to convert" } });
+    }
+
+    // 2. Calculate Cost
+    let costPerToken = 0;
+
+    // Rule: Non-Veg -> Veg is FREE
+    if (fromDiet === "non_veg" && toDiet === "veg") {
+      costPerToken = 0;
+    } else {
+      // Look up upgrade price
+      // We need a way to map the specific diet upgrade.
+      // Using UpgradePrice table with scope='TOKEN'
+      const upgradePrice = await prisma.upgradePrice.findFirst({
+        where: {
+          fromDiet: fromDiet,
+          toDiet: toDiet,
+          scope: "TOKEN",
+          isActive: true,
+        },
+      });
+
+      if (!upgradePrice) {
+        // If no explicit price found for Veg->NonVeg, we block it (or assume 0? Safer to block if not defined).
+        return res
+          .status(400)
+          .json({
+            error: { message: "Conversion not available for these types" },
+          });
+      }
+      costPerToken = parseFloat(upgradePrice.price);
+    }
+
+    const totalCost = costPerToken * tokensToConvert;
+
+    // 3. Prepare Target Wallet Data
+    // We need to find or create the target wallet.
+    // For validity: If source is valid longer, maybe extend target?
+    // Let's keep it simple: Target wallet keeps its validUntil if exists. If new, use source validUntil.
+    // Or: Always take MAX(source.validUntil, target.validUntil)
+
+    let targetWallet = await prisma.curryWallet.findUnique({
+      where: { userId_dietType: { userId, dietType: toDiet } },
+    });
+
+    let newValidUntil = sourceWallet.validUntil;
+    if (
+      targetWallet &&
+      new Date(targetWallet.validUntil) > new Date(sourceWallet.validUntil)
+    ) {
+      newValidUntil = targetWallet.validUntil;
+    }
+
+    // 4. Transaction
+    const [updatedSource, updatedTarget] = await prisma.$transaction([
+      // Deduct from Source (Increase usedTokens? Or Decrease total? Decrease total is better for 'Conversion')
+      // Actually, schema has `usedTokens`. If we decrease `total`, `used` stays same.
+      // Correct: decrease `totalTokens`.
+      prisma.curryWallet.update({
+        where: { id: sourceWallet.id },
+        data: { totalTokens: { decrement: tokensToConvert } },
+      }),
+      // Add to Target
+      prisma.curryWallet.upsert({
+        where: { userId_dietType: { userId, dietType: toDiet } },
+        update: {
+          totalTokens: { increment: tokensToConvert },
+          validUntil: newValidUntil,
+        },
+        create: {
+          userId,
+          dietType: toDiet,
+          totalTokens: tokensToConvert,
+          usedTokens: 0,
+          validUntil: newValidUntil,
+        },
+      }),
+    ]);
+
+    res.json({
+      data: {
+        converted: tokensToConvert,
+        totalCost: totalCost,
+        sourceBalance: updatedSource.totalTokens - updatedSource.usedTokens,
+        targetBalance: updatedTarget.totalTokens - updatedTarget.usedTokens,
+      },
+      message: "Tokens converted successfully",
+    });
+  } catch (error) {
+    console.error("Convert Tokens Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
