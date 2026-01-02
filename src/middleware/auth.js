@@ -1,10 +1,9 @@
-const admin = require('../config/firebase');
+const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 /**
- * Middleware to verify Firebase ID token and attach user to request.
- * Creates a new user if one with the phone number doesn't exist.
+ * Middleware to verify JWT and attach user to request.
  */
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -21,38 +20,20 @@ const verifyToken = async (req, res, next) => {
   }
 
   try {
-    // If admin app is not initialized (e.g. missing env vars), this will fail
-    if (!admin.apps.length) {
-       return res.status(500).json({
-        error: {
-          message: 'Firebase not configured',
-          code: 'FIREBASE_ERROR',
-          status: 500,
-        },
-      });
-    }
-
-    const decodedToken = await admin.auth().verifyIdToken(token);
-    const phoneNumber = decodedToken.phone_number;
-
-    if (!phoneNumber) {
-      return res.status(401).json({
-        error: {
-          message: 'Token does not contain a phone number',
-          code: 'INVALID_TOKEN_PAYLOAD',
-          status: 401,
-        },
-      });
-    }
-
-    // Find or create user
-    let user = await prisma.user.findUnique({
-      where: { phoneNumber },
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Attach user (fetching from DB to ensure it exists and getting latest role)
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId }
     });
 
     if (!user) {
-      user = await prisma.user.create({
-        data: { phoneNumber },
+      return res.status(401).json({
+        error: {
+          message: 'User no longer exists',
+          code: 'INVALID_USER',
+          status: 401,
+        },
       });
     }
 

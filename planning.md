@@ -110,18 +110,16 @@ vyanjo-backend/
 
 ### Pause Limitations
 
-**Rule**: Users can only pause meals for today and tomorrow (48-hour window)
+**Rule**: Users can only pause meals for **tomorrow onwards** (Requested day must be > today).
 
 **Rationale**:
 
-- Works with on-demand generation (no future meals exist yet)
-- Prevents excessive advance planning
-- Simplifies system logic
+- Enforces user planning (subscriptions can't be paused same-day).
+- Simplifies production logic.
 
 **Enforcement**:
 
-- `POST /meals/pause` validates: `meal_date <= getTodayIST() + 1 day`
-- Still enforces 8 PM IST deadline for same-day pauses
+- `POST /subscriptions/:id/pause` validates: `meal_date > getTodayIST()`.
 
 ### Data Integrity Rules
 
@@ -172,10 +170,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Enums
+enum Role {
+  USER
+  ADMIN
+}
+
+enum PlanTier {
+  BASIC
+  REGULAR
+  PREMIUM
+}
+
 // 1. Users table
 model User {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  phoneNumber String   @unique @map("phone_number") @db.VarChar(15)
+  phoneNumber String?  @unique @map("phone_number") @db.VarChar(15) // Now Optional
+  email       String   @unique @db.VarChar(255) // Required
+  password    String   @db.VarChar(255)         // Required (Hashed)
+  role        Role     @default(USER)
   name        String?  @db.VarChar(100)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -186,6 +199,10 @@ model User {
   curryOrders       CurryOrder[]
   notifications     Notification[]
   deliveryGroups    DeliveryGroup[]
+
+  // Relations for Issues
+  raisedIssues      Issue[] @relation("UserIssues")
+  resolvedIssues    Issue[] @relation("AdminIssues")
 
   @@map("users")
 }
@@ -233,28 +250,48 @@ model Address {
   @@map("addresses")
 }
 
-// 4. Meal packages
+// 4. Meal packages (Metadata only)
 model MealPackage {
   id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                  String   @db.VarChar(150)
-  dietType              String   @map("diet_type") @db.VarChar(20)
-  cuisineType           String   @map("cuisine_type") @db.VarChar(20)
-  includesBreakfast     Boolean  @default(false) @map("includes_breakfast")
-  includesLunch         Boolean  @default(false) @map("includes_lunch")
-  includesDinner        Boolean  @default(false) @map("includes_dinner")
-  includesSnacks        Boolean  @default(false) @map("includes_snacks")
-  durationDays          Int      @map("duration_days")
+  name                  String   @db.VarChar(150) // e.g. "Basic Veg North"
+  dietType              String   @map("diet_type") @db.VarChar(20) // Veg, NonVeg
+  cuisineType           String   @map("cuisine_type") @db.VarChar(20) // North, South
+  tier                  PlanTier @default(REGULAR)
+
+  // Container info (still relevant for the package type)
   defaultContainer      String   @map("default_container") @db.VarChar(20)
   allowsContainerChoice Boolean  @default(false) @map("allows_container_choice")
+
+  // Upgradability flags
   allowsDietUpgrade     Boolean  @default(false) @map("allows_diet_upgrade")
   allowsCuisineUpgrade  Boolean  @default(false) @map("allows_cuisine_upgrade")
-  price                 Decimal  @db.Decimal(10, 2)
+
   isActive              Boolean  @default(true) @map("is_active")
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  subscriptions Subscription[]
+  pricingOptions        PackagePricing[]
+  subscriptions         Subscription[]
 
   @@map("meal_packages")
+}
+
+// 4.1 Package Pricing (New: Flexible durations and combinations)
+model PackagePricing {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mealPackageId String   @map("meal_package_id") @db.Uuid
+  name          String   @db.VarChar(150) // e.g. "Weekly Tiffin Only", "Monthly All Meals"
+
+  durationDays  Int      @map("duration_days") // 1, 7, 30
+  mealsIncluded String[] @map("meals_included") // ["TIFFIN"], ["LUNCH", "DINNER"]
+
+  price         Decimal  @db.Decimal(10, 2)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  mealPackage   MealPackage @relation(fields: [mealPackageId], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+
+  @@map("package_pricing")
 }
 
 // 5. Subscriptions
@@ -262,52 +299,98 @@ model Subscription {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId        String   @map("user_id") @db.Uuid
   mealPackageId String   @map("meal_package_id") @db.Uuid
+  pricingId     String?  @map("pricing_id") @db.Uuid // Link to the specific price plan purchased
+
   addressId     String   @map("address_id") @db.Uuid
   containerType String   @map("container_type") @db.VarChar(20)
+
   startDate     DateTime @map("start_date") @db.Date
   endDate       DateTime @map("end_date") @db.Date
-  status        String   @db.VarChar(20)
+
+  mealsIncluded String[] @map("meals_included") // Snapshot of what is enabled: ["TIFFIN", "LUNCH"]
+  status        String   @db.VarChar(20) // ACTIVE, PAUSED, EXPIRED, CANCELLED
+
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  user         User         @relation(fields: [userId], references: [id])
-  mealPackage  MealPackage  @relation(fields: [mealPackageId], references: [id])
-  address      Address      @relation(fields: [addressId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
+  mealPackage   MealPackage    @relation(fields: [mealPackageId], references: [id])
+  pricing       PackagePricing? @relation(fields: [pricingId], references: [id])
+  address       Address        @relation(fields: [addressId], references: [id])
 
-  meals        SubscriptionMeal[]
-  pauses       MealPause[]
-  upgrades     SubscriptionUpgrade[]
+  meals         SubscriptionMeal[]
+  pauses        MealPause[]
+  upgrades      SubscriptionUpgrade[]
 
-  @@unique([userId], map: "unique_active_subscription", where: { status: "active" })
   @@map("subscriptions")
 }
 
-// 6. Weekly menus
+// 6. Categories (Hierarchy for Menu)
+model Category {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  parentId    String?  @map("parent_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  menuItems   MenuItem[]
+
+  @@map("categories")
+}
+
+// 7. Menu Items
+model MenuItem {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(150)
+  categoryId  String?  @map("category_id") @db.Uuid
+  description String?  @db.Text
+  imageUrl    String?  @map("image_url") @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  category        Category?        @relation(fields: [categoryId], references: [id])
+  weeklyMenuItems WeeklyMenuItem[]
+
+  @@map("menu_items")
+}
+
+// 8. Weekly menus
 model WeeklyMenu {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   dietType      String   @map("diet_type") @db.VarChar(20)
   cuisineType   String   @map("cuisine_type") @db.VarChar(20)
-  weekStartDate DateTime @map("week_start_date") @db.Date
+  tier          PlanTier @default(REGULAR)
+  weekStartDate DateTime @map("week_start_date") @db.Date // Determine the week
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   items WeeklyMenuItem[]
 
-  @@unique([dietType, cuisineType, weekStartDate])
+  @@unique([dietType, cuisineType, tier, weekStartDate])
   @@map("weekly_menus")
 }
 
-// 7. Weekly menu items
+// 9. Weekly menu items
 model WeeklyMenuItem {
-  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  weeklyMenuId  String @map("weekly_menu_id") @db.Uuid
-  itemType      String @map("item_type") @db.VarChar(20)
-  itemName      String @map("item_name") @db.Text
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  weeklyMenuId  String   @map("weekly_menu_id") @db.Uuid
 
-  weeklyMenu WeeklyMenu @relation(fields: [weeklyMenuId], references: [id], onDelete: Cascade)
+  // e.g. 'TIFFIN', 'LUNCH', 'DINNER' - Corresponds to mealsIncluded
+  mealType      String   @map("meal_type") @db.VarChar(20)
+
+  dayOfWeek     Int      @map("day_of_week") // 1=Monday
+
+  menuItemId    String?  @map("menu_item_id") @db.Uuid
+  itemName      String   @map("item_name") @db.Text
+
+  weeklyMenu    WeeklyMenu @relation(fields: [weeklyMenuId], references: [id], onDelete: Cascade)
+  menuItem      MenuItem?  @relation(fields: [menuItemId], references: [id])
 
   @@map("weekly_menu_items")
 }
 
-// 8. Delivery time slots
+// 8. Delivery time slots (unchanged but context)
 model DeliveryTimeSlot {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String   @db.VarChar(50)
@@ -321,7 +404,7 @@ model DeliveryTimeSlot {
   @@map("delivery_time_slots")
 }
 
-// 9. Delivery groups
+// 9. Delivery groups (unchanged)
 model DeliveryGroup {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId      String   @map("user_id") @db.Uuid
@@ -340,7 +423,10 @@ model SubscriptionMeal {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   subscriptionId  String   @map("subscription_id") @db.Uuid
   serviceDate     DateTime @map("service_date") @db.Date
-  itemType        String   @map("item_type") @db.VarChar(20)
+
+  // Matches mealsIncluded e.g. 'TIFFIN', 'LUNCH'
+  mealType        String   @map("meal_type") @db.VarChar(20)
+
   deliverySlotId  String?  @map("delivery_slot_id") @db.Uuid
   deliveryGroupId String?  @map("delivery_group_id") @db.Uuid
   isPaused        Boolean  @default(false) @map("is_paused")
@@ -350,7 +436,7 @@ model SubscriptionMeal {
   deliverySlot    DeliveryTimeSlot? @relation(fields: [deliverySlotId], references: [id])
   deliveryGroup   DeliveryGroup?    @relation(fields: [deliveryGroupId], references: [id])
 
-  @@unique([subscriptionId, serviceDate, itemType])
+  @@unique([subscriptionId, serviceDate, mealType])
   @@map("subscription_meals")
 }
 
@@ -420,27 +506,42 @@ model CurryOrder {
 
 // 15. Upgrade prices
 model UpgradePrice {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  upgradeType String   @map("upgrade_type") @db.VarChar(30)
-  scope       String   @db.VarChar(20)
-  mealType    String?  @map("meal_type") @db.VarChar(20)
-  price       Decimal  @db.Decimal(10, 2)
-  isActive    Boolean  @default(true) @map("is_active")
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @default("Upgrade") @db.VarChar(100)
+  fromTier    PlanTier? @map("from_tier")
+  toTier      PlanTier? @map("to_tier")
+  fromDiet    String?   @map("from_diet") @db.VarChar(20)
+  toDiet      String?   @map("to_diet")   @db.VarChar(20)
+  fromCuisine String?   @map("from_cuisine") @db.VarChar(20) // Added
+  toCuisine   String?   @map("to_cuisine")   @db.VarChar(20) // Added
+  scope       String    @db.VarChar(20) // MEAL, DAY, WEEK
+  mealType    String?   @map("meal_type") @db.VarChar(20)
+  price       Decimal   @db.Decimal(10, 2)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   @@map("upgrade_prices")
 }
 
 // 16. Subscription upgrades
 model SubscriptionUpgrade {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  subscriptionId String   @map("subscription_id") @db.Uuid
-  upgradeType    String   @map("upgrade_type") @db.VarChar(30)
-  scope          String   @db.VarChar(20)
-  mealType       String?  @map("meal_type") @db.VarChar(20)
-  startDate      DateTime @map("start_date") @db.Date
-  endDate        DateTime @map("end_date") @db.Date
-  price          Decimal  @db.Decimal(10, 2)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String    @map("subscription_id") @db.Uuid
+
+  targetTier     PlanTier? @map("target_tier")
+  targetDiet     String?   @map("target_diet") @db.VarChar(20)
+  targetCuisine  String?   @map("target_cuisine") @db.VarChar(20) // Added
+
+  originalTier   PlanTier? @map("original_tier")
+  originalDiet   String?   @map("original_diet") @db.VarChar(20)
+  originalCuisine String?  @map("original_cuisine") @db.VarChar(20) // Added
+
+  scope          String    @db.VarChar(20)
+  mealType       String?   @map("meal_type") @db.VarChar(20)
+  startDate      DateTime  @map("start_date") @db.Date
+  endDate        DateTime  @map("end_date") @db.Date
+  price          Decimal   @db.Decimal(10, 2)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   subscription Subscription @relation(fields: [subscriptionId], references: [id])
 
@@ -459,6 +560,24 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notifications")
+}
+
+// 18. Issues (Support Tickets)
+model Issue {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  category    String   @db.VarChar(50) // e.g., 'delivery', 'food_quality', 'app'
+  description String   @db.Text
+  status      String   @default("open") @db.VarChar(20) // 'open', 'resolved', 'closed'
+  adminId     String?  @map("admin_id") @db.Uuid // Admin who resolved it
+  resolution  String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user  User  @relation("UserIssues", fields: [userId], references: [id])
+  admin User? @relation("AdminIssues", fields: [adminId], references: [id])
+
+  @@map("issues")
 }
 ```
 
@@ -858,19 +977,19 @@ model Notification {
     "packages": [
       {
         "id": "uuid",
-        "name": "South Indian Veg Weekly",
+        "name": "Basic Veg North",
         "dietType": "veg",
-        "cuisineType": "south_indian",
-        "includesBreakfast": true,
-        "includesLunch": true,
-        "includesDinner": true,
-        "includesSnacks": false,
-        "durationDays": 7,
-        "defaultContainer": "steel",
-        "allowsContainerChoice": true,
-        "allowsDietUpgrade": false,
-        "allowsCuisineUpgrade": true,
-        "price": 1200.0
+        "cuisineType": "north",
+        "tier": "BASIC",
+        "pricingOptions": [
+          {
+            "id": "uuid",
+            "name": "1 Week Tiffin",
+            "durationDays": 7,
+            "mealsIncluded": ["TIFFIN"],
+            "price": 500.0
+          }
+        ]
       }
     ]
   }
@@ -939,11 +1058,12 @@ model Notification {
       "items": [
         {
           "itemType": "breakfast",
-          "itemName": "Idli, Sambar, Chutney"
-        },
-        {
-          "itemType": "lunch",
-          "itemName": "Rice, Dal, Rasam, Vegetable Curry"
+          "menuItem": {
+            "name": "Idli Sambar",
+            "category": {
+              "name": "Breakfast Specials"
+            }
+          }
         }
       ]
     }
@@ -996,32 +1116,31 @@ model Notification {
 
 ```json
 {
-  "mealPackageId": "uuid",
-  "addressId": "uuid",
-  "containerType": "steel",
-  "startDate": "2025-01-20"
+  "pricing_id": "uuid",
+  "address_id": "uuid",
+  "container_type": "steel",
+  "start_date": "2025-01-20",
+  "slot_preferences": {
+    "TIFFIN": "uuid_slot1",
+    "LUNCH": "uuid_slot2"
+  }
 }
 ```
 
 **Validation**:
 
-- `mealPackageId`: Required, must exist and be active
-- `addressId`: Required, must belong to user
-- `containerType`: Required, one of ['plastic', 'steel']
-- `startDate`: Required, ISO date format, must be today or future date (in IST)
+- `pricing_id`: Required, must exist and be active
+- `address_id`: Required, must belong to user
+- `slot_preferences`: Optional map of MealType -> SlotID.
 
 **Business Logic**:
 
-1. Check user has no active subscription (status = 'active')
-   - If active exists: Return 422 "You already have an active subscription"
-2. Fetch meal package details
-3. If `containerType` not allowed by package (`allowsContainerChoice = false`):
-   - Use package's `defaultContainer` instead, ignore request value
-4. Validate `containerType` matches allowed values if choice is allowed
-5. Calculate `endDate = startDate + mealPackage.durationDays - 1`
-6. Create subscription record with `status = 'active'`
-7. **Do NOT generate subscription_meals here** (on-demand generation)
-8. Create notification: "Your subscription has been activated successfully"
+1. Check user has no active subscription.
+2. Fetch `PackagePricing` details.
+3. Validate lunch slot timing if Tiffin also selected (7 AM vs 10 AM).
+4. Calculate `endDate` based on `pricing.durationDays`.
+5. Create subscription and generate `SubscriptionMeal` records immediately.
+6. Return success.
 
 **Response (201)**:
 
@@ -1737,47 +1856,11 @@ model Notification {
 
 ### Module 10: Upgrades
 
-**Base Path**: `/api/upgrades`
+**Base Path**: `/api/subscriptions`
 
-#### GET /api/upgrades/prices
+#### POST /api/subscriptions/:id/upgrade
 
-**Purpose**: Get available upgrade prices
-
-**Authentication**: Required
-
-**Response (200)**:
-
-```json
-{
-  "data": {
-    "upgrades": [
-      {
-        "id": "uuid",
-        "upgradeType": "veg_to_nonveg",
-        "scope": "meal",
-        "mealType": "lunch",
-        "price": 50.0
-      },
-      {
-        "id": "uuid",
-        "upgradeType": "south_to_north",
-        "scope": "day",
-        "mealType": null,
-        "price": 100.0
-      }
-    ]
-  }
-}
-```
-
-**Logic**:
-
-- Return all upgrades where `isActive = true`
-- Order by `upgradeType`, then `scope`
-
-#### POST /api/upgrades/apply
-
-**Purpose**: Apply temporary upgrade to subscription
+**Purpose**: Apply an upgrade (Tier, Diet, Cuisine) or Add Meals to an active subscription.
 
 **Authentication**: Required
 
@@ -1785,39 +1868,22 @@ model Notification {
 
 ```json
 {
-  "upgradeType": "veg_to_nonveg",
-  "scope": "meal",
-  "mealType": "lunch",
-  "startDate": "2025-01-15",
-  "endDate": "2025-01-15"
+  "targetTier": "PREMIUM", // Optional
+  "targetDiet": "non_veg", // Optional
+  "targetCuisine": "north", // Optional
+  "scope": "WEEK", // MEAL, DAY, WEEK
+  "date": "2025-01-20", // Start Date
+  "addMeals": ["DINNER"] // Optional array to add specific meals
 }
 ```
 
-**Validation**:
-
-- `upgradeType`: Required, one of ['veg_to_nonveg', 'south_to_north']
-- `scope`: Required, one of ['meal', 'day', 'week']
-- `mealType`: Required if `scope = 'meal'`, one of ['breakfast', 'lunch', 'dinner']
-- `startDate`: Required, ISO date, must be today or future
-- `endDate`: Required, ISO date, must be >= startDate
-
 **Business Logic**:
 
-1. Get user's active subscription
-2. If no active subscription: Return 422 "No active subscription found"
-3. Verify subscription allows this upgrade:
-   - If `upgradeType = 'veg_to_nonveg'`: Check `mealPackage.allowsDietUpgrade = true`
-   - If `upgradeType = 'south_to_north'`: Check `mealPackage.allowsCuisineUpgrade = true`
-   - If not allowed: Return 422 "This upgrade is not available for your subscription"
-4. Verify dates are within subscription period
-5. Fetch upgrade price matching `upgradeType`, `scope`, and `mealType`
-6. If no price found: Return 404 "Upgrade price not found"
-7. Calculate total price:
-   - If `scope = 'meal'`: `price × number of days between startDate and endDate`
-   - If `scope = 'day'`: `price × number of days`
-   - If `scope = 'week'`: `price × number of weeks`
-8. Create `subscription_upgrades` record
-9. Create notification: "Upgrade applied: {upgradeType} for {scope}"
+1. Validates subscription ownership.
+2. Checks `UpgradePrice` table for cost of valid Upgrade (from->to).
+3. If `addMeals` is present, adds `SubscriptionMeal` records for the duration.
+4. Creates `SubscriptionUpgrade` record.
+5. Returns total calculated price and created records.
 
 **Response (201)**:
 
@@ -1826,87 +1892,14 @@ model Notification {
   "data": {
     "upgrade": {
       "id": "uuid",
-      "upgradeType": "veg_to_nonveg",
-      "scope": "meal",
-      "mealType": "lunch",
-      "startDate": "2025-01-15",
-      "endDate": "2025-01-15",
-      "price": 50.0
-    }
-  },
-  "message": "Upgrade applied successfully"
-}
-```
-
-**Errors**:
-
-- 422 if no active subscription
-- 422 if upgrade not allowed by package
-- 404 if price not found
-- 400 if date range invalid
-
-#### GET /api/upgrades/active
-
-**Purpose**: Get active upgrades for user's subscription
-
-**Authentication**: Required
-
-**Response (200)**:
-
-```json
-{
-  "data": {
-    "upgrades": [
-      {
-        "id": "uuid",
-        "upgradeType": "veg_to_nonveg",
-        "scope": "meal",
-        "mealType": "lunch",
-        "startDate": "2025-01-15",
-        "endDate": "2025-01-20",
-        "price": 250.0
-      }
-    ]
+      "price": 150.0,
+      "startDate": "...",
+      "endDate": "..."
+    },
+    "newMeals": 7
   }
 }
 ```
-
-**Logic**:
-
-- Get user's active subscription
-- Return upgrades for that subscription where `endDate >= currentDateIST`
-- Order by `startDate ASC`
-
-**Errors**:
-
-- 422 if no active subscription
-
-#### DELETE /api/upgrades/:upgradeId
-
-**Purpose**: Remove applied upgrade
-
-**Authentication**: Required
-
-**Business Logic**:
-
-1. Verify upgrade belongs to user's subscription
-2. Verify upgrade hasn't started yet (`startDate > currentDateIST`)
-3. Delete upgrade record
-4. Create notification: "Upgrade removed"
-
-**Response (200)**:
-
-```json
-{
-  "message": "Upgrade removed successfully"
-}
-```
-
-**Errors**:
-
-- 403 if upgrade doesn't belong to user
-- 404 if upgrade not found
-- 422 if upgrade already started
 
 ---
 
@@ -1994,6 +1987,69 @@ model Notification {
 ```
 
 ---
+
+### Module 12: Admin Management
+
+**Base Path**: `/api/admin`
+
+#### POST /api/admin/package-pricing
+
+**Purpose**: Create a new pricing option for a Meal Package
+
+**Request Body**:
+
+```json
+{
+  "mealPackageId": "uuid",
+  "name": "Weekly Tiffin",
+  "durationDays": 7,
+  "mealsIncluded": ["TIFFIN"],
+  "price": 500.0
+}
+```
+
+#### POST /api/admin/categories
+
+**Purpose**: Create a menu category (e.g. "Main Course", "Starters")
+
+**Request Body**:
+
+```json
+{
+  "name": "Curries",
+  "parentId": "optional_uuid_of_parent"
+}
+```
+
+#### POST /api/admin/menu-items
+
+**Purpose**: Create a global menu item
+
+**Request Body**:
+
+```json
+{
+  "name": "Paneer Butter Masala",
+  "categoryId": "uuid",
+  "description": "Rich tomato gravy..."
+}
+```
+
+#### POST /api/admin/curry-packages
+
+**Purpose**: Create a curry token package
+
+**Request Body**:
+
+```json
+{
+  "name": "Veg 10 Pack",
+  "dietType": "veg",
+  "tokenCount": 10,
+  "validityDays": 30,
+  "price": 450.0
+}
+```
 
 ## Implementation File Structure
 
