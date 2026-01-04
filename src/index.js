@@ -10,6 +10,18 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// DEBUG: Request Logger
+app.use((req, res, next) => {
+  console.log(`\n[REQUEST] ${req.method} ${req.url}`);
+  if (Object.keys(req.body).length > 0) {
+    console.log("[BODY]:", JSON.stringify(req.body, null, 2));
+  }
+  if (Object.keys(req.query).length > 0) {
+    console.log("[QUERY]:", JSON.stringify(req.query, null, 2));
+  }
+  next();
+});
+
 // Basic health check
 app.get("/", (req, res) => {
   res.json({ message: "Vyanjo Backend API is running" });
@@ -40,13 +52,18 @@ app.use("/api/curry", curryRoutes);
 app.use("/api/master-data", require("./routes/masterDataRoutes"));
 
 // Centralized Error Handling
+// Centralized Error Handling
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error(`\n[ERROR] ${req.method} ${req.url}`);
+  console.error("[STACK]:", err.stack);
+  console.error("[MESSAGE]:", err.message);
+
   res.status(err.status || 500).json({
     error: {
       message: err.message || "Internal Server Error",
       code: err.code || "INTERNAL_ERROR",
       status: err.status || 500,
+      detail: process.env.NODE_ENV === "development" ? err.stack : undefined,
     },
   });
 });

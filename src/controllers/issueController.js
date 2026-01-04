@@ -40,6 +40,9 @@ exports.getMyIssues = async (req, res) => {
       where: { userId },
       orderBy: { createdAt: "desc" },
     });
+    if (issues.length === 0) {
+      return res.status(404).json({ error: { message: "No issues found" } });
+    }
     res.json({ data: { issues } });
   } catch (error) {
     console.error("Get My Issues Error:", error);
@@ -56,6 +59,9 @@ exports.getAllIssues = async (req, res) => {
         user: { select: { name: true, email: true, phoneNumber: true } },
       },
     });
+    if (issues.length === 0) {
+      return res.status(404).json({ error: { message: "No issues found" } });
+    }
     res.json({ data: { issues } });
   } catch (error) {
     console.error("Get All Issues Error:", error);

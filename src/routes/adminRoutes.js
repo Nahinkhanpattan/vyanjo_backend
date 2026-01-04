@@ -12,6 +12,7 @@ router.put("/users/:id", adminController.updateUser);
 router.patch("/users/:id/status", adminController.toggleUserStatus);
 
 // Meal Packages
+router.get("/meal-packages", adminController.getAllMealPackages);
 router.post("/meal-packages", adminController.createMealPackage);
 router.put("/meal-packages/:id", adminController.updateMealPackage);
 router.patch(

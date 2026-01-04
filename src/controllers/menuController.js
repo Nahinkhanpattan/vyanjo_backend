@@ -4,7 +4,7 @@ const moment = require("moment-timezone");
 
 exports.getCurrentMenu = async (req, res) => {
   try {
-    const { diet, cuisine } = req.query;
+    const { diet, cuisine, tier } = req.query; // Added tier support
 
     if (!diet || !cuisine) {
       return res.status(400).json({
@@ -16,19 +16,17 @@ exports.getCurrentMenu = async (req, res) => {
       });
     }
 
-    // Determine current week start date (Assuming Monday is start?)
-    // Prompt doesn't specify, but `week_start_date` suggests weekly blocks.
-    // I'll assume week starts on Monday or Sunday. Let's use moment to get start of week.
     const today = moment().tz("Asia/Kolkata");
-    const weekStart = today.clone().startOf("isoWeek"); // Monday
+    const weekStart = today.clone().startOf("isoWeek");
 
-    const menu = await prisma.weeklyMenu.findUnique({
+    // Using findFirst instead of findUnique to avoid strict compound key requirement issues
+    // and to support optional defaults like Tier
+    const menu = await prisma.weeklyMenu.findFirst({
       where: {
-        dietType_cuisineType_weekStartDate: {
-          dietType: diet,
-          cuisineType: cuisine,
-          weekStartDate: weekStart.toDate(),
-        },
+        dietType: diet,
+        cuisineType: cuisine,
+        tier: tier || "REGULAR", // Default to Regular if not specified
+        weekStartDate: weekStart.toDate(),
       },
       include: {
         items: {
@@ -40,7 +38,9 @@ exports.getCurrentMenu = async (req, res) => {
     if (!menu) {
       return res.status(404).json({
         error: {
-          message: "Menu not found for current week",
+          message: `No menu found for ${diet} ${cuisine} (${
+            tier || "REGULAR"
+          }) for week of ${weekStart.format("YYYY-MM-DD")}`,
           code: "MENU_NOT_FOUND",
           status: 404,
         },
@@ -66,7 +66,7 @@ exports.getCurrentMenu = async (req, res) => {
 
 exports.getWeeklyMenu = async (req, res) => {
   try {
-    const { date, diet, cuisine } = req.query;
+    const { date, diet, cuisine, tier } = req.query;
 
     if (!date || !diet || !cuisine) {
       return res.status(400).json({
@@ -81,13 +81,12 @@ exports.getWeeklyMenu = async (req, res) => {
     const inputDate = moment(date).tz("Asia/Kolkata");
     const weekStart = inputDate.clone().startOf("isoWeek");
 
-    const menu = await prisma.weeklyMenu.findUnique({
+    const menu = await prisma.weeklyMenu.findFirst({
       where: {
-        dietType_cuisineType_weekStartDate: {
-          dietType: diet,
-          cuisineType: cuisine,
-          weekStartDate: weekStart.toDate(),
-        },
+        dietType: diet,
+        cuisineType: cuisine,
+        tier: tier || "REGULAR",
+        weekStartDate: weekStart.toDate(),
       },
       include: {
         items: {
@@ -99,7 +98,9 @@ exports.getWeeklyMenu = async (req, res) => {
     if (!menu) {
       return res.status(404).json({
         error: {
-          message: "Menu not found for specified week",
+          message: `No menu found for ${diet} ${cuisine} (${
+            tier || "REGULAR"
+          }) for week starting ${weekStart.format("YYYY-MM-DD")}`,
           code: "MENU_NOT_FOUND",
           status: 404,
         },

@@ -4,6 +4,7 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 exports.signup = async (req, res) => {
+  console.log("[AuthController] signup", { email: req.body.email });
   try {
     const { email, password, name, phoneNumber } = req.body;
 
@@ -64,6 +65,7 @@ exports.signup = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
+  console.log("[AuthController] login", { email: req.body.email });
   try {
     const { email, password } = req.body;
 

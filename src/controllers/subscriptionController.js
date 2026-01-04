@@ -3,6 +3,7 @@ const prisma = new PrismaClient();
 const moment = require("moment-timezone");
 
 exports.createSubscription = async (req, res) => {
+  console.log("[SubscriptionController] createSubscription", req.body);
   try {
     const userId = req.user.id;
     // We expect pricing_id which determines package, duration, and meals.
@@ -217,6 +218,7 @@ exports.getActiveSubscription = async (req, res) => {
 };
 
 exports.createUpgrade = async (req, res) => {
+  console.log("[SubscriptionController] createUpgrade", req.params, req.body);
   try {
     const userId = req.user.id;
     const { id } = req.params; // Subscription ID
@@ -372,6 +374,11 @@ exports.createUpgrade = async (req, res) => {
 };
 
 exports.pauseSubscription = async (req, res) => {
+  console.log(
+    "[SubscriptionController] pauseSubscription",
+    req.params,
+    req.body
+  );
   try {
     const userId = req.user.id;
     const { id } = req.params;

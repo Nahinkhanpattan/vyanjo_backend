@@ -8,6 +8,11 @@ exports.getCurryPackages = async (req, res) => {
       where: { isActive: true },
       orderBy: { price: "asc" },
     });
+    if (packages.length === 0) {
+      return res
+        .status(404)
+        .json({ error: { message: "No curry packages found" } });
+    }
     res.json({ data: { packages } });
   } catch (error) {
     console.error("Get Curry Packages Error:", error);
@@ -27,6 +32,10 @@ exports.getWalletBalance = async (req, res) => {
     const wallets = await prisma.curryWallet.findMany({
       where: { userId },
     });
+
+    if (wallets.length === 0) {
+      return res.status(404).json({ error: { message: "No wallets found" } });
+    }
 
     res.json({ data: { wallets } });
   } catch (error) {

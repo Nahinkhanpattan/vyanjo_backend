@@ -9,6 +9,7 @@ if (!JWT_SECRET) {
 }
 
 exports.login = async (req, res) => {
+  console.log("[AdminAuthController] login attempt", { email: req.body.email });
   try {
     const { email, password } = req.body;
 

@@ -25,6 +25,12 @@ exports.getMealPackages = async (req, res) => {
       orderBy: { name: "asc" },
     });
 
+    if (packages.length === 0) {
+      return res
+        .status(404)
+        .json({ error: { message: "No meal packages found" } });
+    }
+
     res.json({
       data: {
         packages,
