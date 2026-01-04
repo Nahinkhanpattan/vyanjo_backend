@@ -2157,6 +2157,122 @@ module.exports = router;
 - Returns consistent JSON error response
 - Logs errors to console (for debugging)
 
+### Module 12: Admin Management (Updated)
+
+**Base Path**: `/api/admin`
+
+#### PATCH /api/admin/users/:id/status
+
+**Purpose**: Activate or Deactivate a user account.
+
+**Request Body**:
+
+```json
+{
+  "isActive": false
+}
+```
+
+#### PATCH /api/admin/meal-packages/:id/status
+
+**Purpose**: Activate or Deactivate a meal package.
+
+**Request Body**:
+
+```json
+{
+  "isActive": false
+}
+```
+
+(Other Admin endpoints remain as previously defined...)
+
+---
+
+### Module 13: Issue Tracking
+
+**Base Path**: `/api/issues`
+
+#### POST /api/issues
+
+**Purpose**: User reports an issue.
+
+**Authentication**: Required
+
+**Request Body**:
+
+```json
+{
+  "category": "delivery", // e.g. delivery, food_quality, app
+  "description": "Delivery was late today."
+}
+```
+
+#### GET /api/issues/my-issues
+
+**Purpose**: User views their reported issues.
+
+**Authentication**: Required
+
+#### GET /api/issues/all
+
+**Purpose**: Admin views all issues.
+
+**Authentication**: Admin Required
+
+#### PUT /api/issues/:id
+
+**Purpose**: Admin resolves or updates an issue.
+
+**Authentication**: Admin Required
+
+**Request Body**:
+
+```json
+{
+  "status": "resolved",
+  "resolution": "Refund processed to wallet."
+}
+```
+
+---
+
+### Module 14: Master Data (Address)
+
+**Base Path**: `/api/master-data`
+
+#### GET /api/master-data/states
+
+**Purpose**: Get all states (Public/Auth).
+
+#### GET /api/master-data/states/:stateId/districts
+
+**Purpose**: Get districts for a state.
+
+#### GET /api/master-data/districts/:districtId/pincodes
+
+**Purpose**: Get pincodes for a district.
+
+#### POST /api/master-data/states (Admin)
+
+**Purpose**: Create a state.
+
+**Request Body**: `{ "name": "Karnataka" }`
+
+#### POST /api/master-data/districts (Admin)
+
+**Purpose**: Create a district.
+
+**Request Body**: `{ "name": "Bangalore Urban", "stateId": "uuid" }`
+
+#### POST /api/master-data/pincodes (Admin)
+
+**Purpose**: Create a pincode.
+
+**Request Body**: `{ "code": "560001", "districtId": "uuid" }`
+
+---
+
 ### Utilities (`src/utils/`)
 
 - `timezone.js` - IST timezone helpers:

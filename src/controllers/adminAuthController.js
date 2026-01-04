@@ -1,9 +1,12 @@
-const { PrismaClient } = require('@prisma/client');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
+const { PrismaClient } = require("@prisma/client");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 
 const prisma = new PrismaClient();
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is not defined in environment variables");
+}
 
 exports.login = async (req, res) => {
   try {
@@ -12,8 +15,8 @@ exports.login = async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({
         error: {
-          message: 'Email and password are required',
-          code: 'MISSING_CREDENTIALS',
+          message: "Email and password are required",
+          code: "MISSING_CREDENTIALS",
           status: 400,
         },
       });
@@ -23,11 +26,11 @@ exports.login = async (req, res) => {
       where: { email },
     });
 
-    if (!admin || admin.role !== 'ADMIN') {
+    if (!admin || admin.role !== "ADMIN") {
       return res.status(401).json({
         error: {
-          message: 'Invalid credentials',
-          code: 'INVALID_CREDENTIALS',
+          message: "Invalid credentials",
+          code: "INVALID_CREDENTIALS",
           status: 401,
         },
       });
@@ -38,8 +41,8 @@ exports.login = async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({
         error: {
-          message: 'Invalid credentials',
-          code: 'INVALID_CREDENTIALS',
+          message: "Invalid credentials",
+          code: "INVALID_CREDENTIALS",
           status: 401,
         },
       });
@@ -48,7 +51,7 @@ exports.login = async (req, res) => {
     const token = jwt.sign(
       { id: admin.id, email: admin.email, role: admin.role },
       JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: "24h" }
     );
 
     res.json({
@@ -61,14 +64,14 @@ exports.login = async (req, res) => {
           role: admin.role,
         },
       },
-      message: 'Login successful',
+      message: "Login successful",
     });
   } catch (error) {
-    console.error('Admin Login Error:', error);
+    console.error("Admin Login Error:", error);
     res.status(500).json({
       error: {
-        message: 'Internal server error',
-        code: 'SERVER_ERROR',
+        message: "Internal server error",
+        code: "SERVER_ERROR",
         status: 500,
       },
     });

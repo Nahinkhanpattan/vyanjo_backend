@@ -233,11 +233,9 @@ exports.convertTokens = async (req, res) => {
 
       if (!upgradePrice) {
         // If no explicit price found for Veg->NonVeg, we block it (or assume 0? Safer to block if not defined).
-        return res
-          .status(400)
-          .json({
-            error: { message: "Conversion not available for these types" },
-          });
+        return res.status(400).json({
+          error: { message: "Conversion not available for these types" },
+        });
       }
       costPerToken = parseFloat(upgradePrice.price);
     }
@@ -299,6 +297,49 @@ exports.convertTokens = async (req, res) => {
     });
   } catch (error) {
     console.error("Convert Tokens Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.cancelCurryOrder = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+
+    const order = await prisma.curryOrder.findUnique({
+      where: { id },
+    });
+
+    if (!order || order.userId !== userId) {
+      return res.status(404).json({ error: { message: "Order not found" } });
+    }
+
+    if (order.status !== "placed") {
+      // Assuming 'placed' is initial status
+      return res
+        .status(400)
+        .json({ error: { message: "Cannot cancel order in current status" } });
+    }
+
+    // Logic: Refund 1 token to wallet
+    const wallet = await prisma.curryWallet.findUnique({
+      where: { id: order.walletId },
+    });
+
+    await prisma.$transaction([
+      prisma.curryOrder.update({
+        where: { id },
+        data: { status: "cancelled" },
+      }),
+      prisma.curryWallet.update({
+        where: { id: order.walletId },
+        data: { usedTokens: { decrement: 1 } },
+      }),
+    ]);
+
+    res.json({ message: "Order cancelled and token refunded" });
+  } catch (error) {
+    console.error("Cancel Order Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };

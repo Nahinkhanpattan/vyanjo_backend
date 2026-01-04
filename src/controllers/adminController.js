@@ -8,11 +8,24 @@ exports.getAllUsers = async (req, res) => {
       orderBy: { createdAt: "desc" },
       include: {
         _count: {
-          select: { subscriptions: true, curryOrders: true },
+          select: { subscriptions: false, curryOrders: false },
         },
       },
     });
-    res.json({ data: { users } });
+    res.json({
+      data: {
+        users: {
+          userId: users.id,
+          name: users.name,
+          email: users.email,
+          role: users.role,
+          phoneNumber: users.phoneNumber,
+          createdAt: users.createdAt,
+          updatedAt: users.updatedAt,
+          _count: users._count,
+        },
+      },
+    });
   } catch (error) {
     console.error("Get All Users Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
@@ -33,7 +46,24 @@ exports.getUserById = async (req, res) => {
     });
     if (!user)
       return res.status(404).json({ error: { message: "User not found" } });
-    res.json({ data: { user } });
+    res.json({
+      data: {
+        user: {
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phoneNumber: user.phoneNumber,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+          _count: user._count,
+          addresses: user.addresses,
+          subscriptions: user.subscriptions,
+          curryWallets: user.curryWallets,
+          raisedIssues: user.raisedIssues,
+        },
+      },
+    });
   } catch (error) {
     console.error("Get User Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
@@ -48,9 +78,82 @@ exports.updateUser = async (req, res) => {
       where: { id },
       data,
     });
-    res.json({ data: { user }, message: "User updated" });
+    res.json({
+      data: {
+          user: {
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phoneNumber: user.phoneNumber,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      },
+      message: "User updated",
+    });
   } catch (error) {
     console.error("Update User Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.toggleUserStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body; // Expect explicit boolean
+
+    if (typeof isActive !== "boolean") {
+      return res
+        .status(400)
+        .json({ error: { message: "isActive boolean is required" } });
+    }
+
+    const user = await prisma.user.update({
+      where: { id },
+      data: { isActive }, // Will fail if schema not applied, but code is correct
+    });
+    res.json({
+      data: {
+         user: {
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phoneNumber: user.phoneNumber,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      },
+      message: `User ${isActive ? "activated" : "deactivated"}`,
+    });
+  } catch (error) {
+    console.error("Toggle User Status Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.toggleMealPackageStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    if (typeof isActive !== "boolean") {
+      return res
+        .status(400)
+        .json({ error: { message: "isActive boolean is required" } });
+    }
+
+    const mealPackage = await prisma.mealPackage.update({
+      where: { id },
+      data: { isActive },
+    });
+    res.json({
+      data: { mealPackage },
+      message: `Package ${isActive ? "activated" : "deactivated"}`,
+    });
+  } catch (error) {
+    console.error("Toggle Package Status Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
@@ -280,8 +383,36 @@ exports.deleteCategory = async (req, res) => {
 // --- MenuItem Management ---
 exports.createMenuItem = async (req, res) => {
   try {
-    const data = req.body; // { name, categoryId, description... }
-    const menuItem = await prisma.menuItem.create({ data });
+    const {
+      name,
+      categoryId,
+      description,
+      dietType,
+      cuisineType,
+      imageUrl,
+      isActive,
+    } = req.body;
+
+    // Explicitly construct data object to avoid pollution and ensure types
+    // Prisma sometimes requires 'connect' for relations if scalar isn't exposed in create input
+    const createData = {
+      name,
+      description,
+      dietType,
+      cuisineType,
+      imageUrl,
+      isActive: isActive !== undefined ? isActive : true,
+    };
+
+    if (categoryId) {
+      createData.category = {
+        connect: { id: categoryId },
+      };
+    }
+
+    const menuItem = await prisma.menuItem.create({
+      data: createData,
+    });
     res.status(201).json({ data: { menuItem }, message: "Menu Item created" });
   } catch (error) {
     console.error("Create MenuItem Error:", error);

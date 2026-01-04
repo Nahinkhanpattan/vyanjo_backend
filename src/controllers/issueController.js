@@ -1,19 +1,16 @@
-const { PrismaClient } = require('@prisma/client');
+const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
-exports.raiseIssue = async (req, res) => {
+// User: Create Issue
+exports.createIssue = async (req, res) => {
   try {
     const userId = req.user.id;
     const { category, description } = req.body;
 
     if (!category || !description) {
-      return res.status(400).json({
-        error: {
-          message: 'Category and description are required',
-          code: 'MISSING_FIELDS',
-          status: 400
-        }
-      });
+      return res
+        .status(400)
+        .json({ error: { message: "Category and description are required" } });
     }
 
     const issue = await prisma.issue.create({
@@ -21,75 +18,73 @@ exports.raiseIssue = async (req, res) => {
         userId,
         category,
         description,
-        status: 'open'
-      }
+        status: "open",
+      },
+      include: { user: { select: { name: true, email: true } } },
     });
 
-    res.status(201).json({
-      data: { issue },
-      message: 'Issue raised successfully'
-    });
+    res
+      .status(201)
+      .json({ data: { issue }, message: "Issue reported successfully" });
   } catch (error) {
-    console.error('Raise Issue Error:', error);
-    res.status(500).json({ error: { message: 'Internal Server Error' } });
+    console.error("Create Issue Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
 
-exports.getUserIssues = async (req, res) => {
+// User: Get My Issues
+exports.getMyIssues = async (req, res) => {
   try {
     const userId = req.user.id;
     const issues = await prisma.issue.findMany({
       where: { userId },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: "desc" },
     });
     res.json({ data: { issues } });
   } catch (error) {
-    console.error('Get User Issues Error:', error);
-    res.status(500).json({ error: { message: 'Internal Server Error' } });
+    console.error("Get My Issues Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
 
-// Admin Only
+// Admin: Get All Issues
 exports.getAllIssues = async (req, res) => {
   try {
-    const { status } = req.query;
-    const where = {};
-    if (status) where.status = status;
-
     const issues = await prisma.issue.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: { 
-        user: { 
-          select: { name: true, phoneNumber: true } 
-        } 
-      }
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { name: true, email: true, phoneNumber: true } },
+      },
     });
     res.json({ data: { issues } });
   } catch (error) {
-    console.error('Get All Issues Error:', error);
-    res.status(500).json({ error: { message: 'Internal Server Error' } });
+    console.error("Get All Issues Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
 
-exports.resolveIssue = async (req, res) => {
+// Admin: Update Issue (Resolve/Close)
+exports.updateIssue = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { resolution, status } = req.body; // status could be 'resolved', 'closed', etc.
     const adminId = req.user.id;
+    const { id } = req.params;
+    const { status, resolution } = req.body;
+
+    // Validate status status enum if strict, or let it be string
+    // Prompt says: 'open', 'resolved', 'closed' or 'in progress'
 
     const issue = await prisma.issue.update({
       where: { id },
       data: {
+        status,
         resolution,
-        status: status || 'resolved',
-        adminId
-      }
+        adminId, // Track who updated it
+      },
     });
 
-    res.json({ data: { issue }, message: 'Issue resolved' });
+    res.json({ data: { issue }, message: "Issue updated" });
   } catch (error) {
-    console.error('Resolve Issue Error:', error);
-    res.status(500).json({ error: { message: 'Internal Server Error' } });
+    console.error("Update Issue Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };

@@ -37,6 +37,7 @@ app.use("/api/meal-packages", mealPackageRoutes);
 app.use("/api/menus", menuRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/curry", curryRoutes);
+app.use("/api/master-data", require("./routes/masterDataRoutes"));
 
 // Centralized Error Handling
 app.use((err, req, res, next) => {

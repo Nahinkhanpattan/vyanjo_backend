@@ -9,10 +9,15 @@ router.use(verifyAdmin);
 router.get("/users", adminController.getAllUsers);
 router.get("/users/:id", adminController.getUserById);
 router.put("/users/:id", adminController.updateUser);
+router.patch("/users/:id/status", adminController.toggleUserStatus);
 
 // Meal Packages
 router.post("/meal-packages", adminController.createMealPackage);
 router.put("/meal-packages/:id", adminController.updateMealPackage);
+router.patch(
+  "/meal-packages/:id/status",
+  adminController.toggleMealPackageStatus
+);
 router.delete("/meal-packages/:id", adminController.deleteMealPackage);
 
 // Package Pricing (New)

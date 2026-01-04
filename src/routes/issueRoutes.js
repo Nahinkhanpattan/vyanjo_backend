@@ -1,19 +1,17 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const issueController = require('../controllers/issueController');
-const verifyToken = require('../middleware/auth');
-const verifyAdmin = require('../middleware/adminAuth');
+const verifyToken = require("../middleware/auth");
+// verifyAdmin imported below as verifyAdminMiddleware
 
-// User Routes
-router.post('/', verifyToken, issueController.raiseIssue);
-router.get('/', verifyToken, issueController.getUserIssues);
+const verifyAdminMiddleware = require("../middleware/adminAuth");
+const issueController = require("../controllers/issueController");
+
+// Protected User Routes
+router.post("/", verifyToken, issueController.createIssue);
+router.get("/my-issues", verifyToken, issueController.getMyIssues);
 
 // Admin Routes
-// Note: We mount these under the same base path but protect them differently.
-// Or we could have put them in adminRoutes.js.
-// Since User Request asked for "issues endpoint", let's keep them here but clear separation.
-
-router.get('/all', verifyAdmin, issueController.getAllIssues);
-router.put('/:id/resolve', verifyAdmin, issueController.resolveIssue);
+router.get("/all", verifyAdminMiddleware, issueController.getAllIssues);
+router.put("/:id", verifyAdminMiddleware, issueController.updateIssue);
 
 module.exports = router;
