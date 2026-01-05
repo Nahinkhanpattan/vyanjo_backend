@@ -7,7 +7,371 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Enums
+model User {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phoneNumber    String?         @unique @map("phone_number") @db.VarChar(15)
+  name           String?         @db.VarChar(100)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  email          String          @unique @db.VarChar(255)
+  password       String          @db.VarChar(255)
+  role           Role            @default(USER)
+  isActive       Boolean         @default(true) @map("is_active")
+  addresses      Address[]
+  curryOrders    CurryOrder[]
+  deliveryGroups DeliveryGroup[]
+  resolvedIssues Issue[]         @relation("AdminIssues")
+  raisedIssues   Issue[]         @relation("UserIssues")
+  notifications  Notification[]
+  subscriptions  Subscription[]
+  curryWallets   CurryWallet[]
+
+  @@map("users")
+}
+
+model CommonPoint {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String    @db.VarChar(150)
+  addressLine1 String?   @map("address_line_1")
+  city         String?   @db.VarChar(100)
+  state        String?   @db.VarChar(100)
+  pincode      String?   @db.VarChar(10)
+  latitude     Decimal?  @db.Decimal(9, 6)
+  longitude    Decimal?  @db.Decimal(9, 6)
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  addresses    Address[]
+
+  @@map("common_points")
+}
+
+model Address {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String         @map("user_id") @db.Uuid
+  tag           String         @db.VarChar(50)
+  addressLine1  String         @map("address_line_1")
+  addressLine2  String?        @map("address_line_2")
+  landmark      String?
+  city          String         @db.VarChar(100)
+  state         String         @db.VarChar(100)
+  pincode       String         @db.VarChar(10)
+  latitude      Decimal?       @db.Decimal(9, 6)
+  longitude     Decimal?       @db.Decimal(9, 6)
+  commonPointId String?        @map("common_point_id") @db.Uuid
+  phoneNumber   String?        @map("phone_number") @db.VarChar(15)
+  isPrimary     Boolean        @default(false) @map("is_primary")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  commonPoint   CommonPoint?   @relation(fields: [commonPointId], references: [id])
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+
+  @@map("addresses")
+}
+
+model MealPackage {
+  id                    String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                  String           @db.VarChar(150)
+  dietType              String           @map("diet_type") @db.VarChar(20)
+  cuisineType           String           @map("cuisine_type") @db.VarChar(20)
+  defaultContainer      String           @map("default_container") @db.VarChar(20)
+  allowsContainerChoice Boolean          @default(false) @map("allows_container_choice")
+  allowsDietUpgrade     Boolean          @default(false) @map("allows_diet_upgrade")
+  allowsCuisineUpgrade  Boolean          @default(false) @map("allows_cuisine_upgrade")
+  isActive              Boolean          @default(true) @map("is_active")
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  tier                  PlanTier         @default(REGULAR)
+  pricingOptions        PackagePricing[]
+  subscriptions         Subscription[]
+
+  @@map("meal_packages")
+}
+
+model PackagePricing {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mealPackageId String         @map("meal_package_id") @db.Uuid
+  name          String         @db.VarChar(150)
+  durationDays  Int            @map("duration_days")
+  mealsIncluded String[]       @map("meals_included")
+  price         Decimal        @db.Decimal(10, 2)
+  isActive      Boolean        @default(true) @map("is_active")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  mealPackage   MealPackage    @relation(fields: [mealPackageId], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+
+  @@map("package_pricing")
+}
+
+model Subscription {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String                @map("user_id") @db.Uuid
+  mealPackageId String                @map("meal_package_id") @db.Uuid
+  addressId     String                @map("address_id") @db.Uuid
+  containerType String                @map("container_type") @db.VarChar(20)
+  startDate     DateTime              @map("start_date") @db.Date
+  endDate       DateTime              @map("end_date") @db.Date
+  status        String                @db.VarChar(20)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  mealsIncluded String[]              @map("meals_included")
+  pricingId     String?               @map("pricing_id") @db.Uuid
+  pauses        MealPause[]
+  meals         SubscriptionMeal[]
+  upgrades      SubscriptionUpgrade[]
+  address       Address               @relation(fields: [addressId], references: [id])
+  mealPackage   MealPackage           @relation(fields: [mealPackageId], references: [id])
+  pricing       PackagePricing?       @relation(fields: [pricingId], references: [id])
+  user          User                  @relation(fields: [userId], references: [id])
+
+  @@map("subscriptions")
+}
+
+model Category {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String     @db.VarChar(100)
+  description String?
+  parentId    String?    @map("parent_id") @db.Uuid
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  menuItems   MenuItem[]
+
+  @@map("categories")
+}
+
+model MenuItem {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String           @db.VarChar(150)
+  categoryId      String?          @map("category_id") @db.Uuid
+  description     String?
+  imageUrl        String?          @map("image_url")
+  isActive        Boolean          @default(true) @map("is_active")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  cuisineType     String?          @map("cuisine_type") @db.VarChar(20)
+  dietType        String?          @map("diet_type") @db.VarChar(20)
+  category        Category?        @relation(fields: [categoryId], references: [id])
+  weeklyMenuItems WeeklyMenuItem[]
+
+  @@map("menu_items")
+}
+
+model WeeklyMenu {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dietType      String           @map("diet_type") @db.VarChar(20)
+  cuisineType   String           @map("cuisine_type") @db.VarChar(20)
+  weekStartDate DateTime         @map("week_start_date") @db.Date
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  tier          PlanTier         @default(REGULAR)
+  items         WeeklyMenuItem[]
+
+  @@unique([dietType, cuisineType, tier, weekStartDate])
+  @@map("weekly_menus")
+}
+
+model WeeklyMenuItem {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  weeklyMenuId String     @map("weekly_menu_id") @db.Uuid
+  itemName     String     @map("item_name")
+  dayOfWeek    Int        @map("day_of_week")
+  mealType     String     @map("meal_type") @db.VarChar(20)
+  menuItemId   String?    @map("menu_item_id") @db.Uuid
+  menuItem     MenuItem?  @relation(fields: [menuItemId], references: [id])
+  weeklyMenu   WeeklyMenu @relation(fields: [weeklyMenuId], references: [id], onDelete: Cascade)
+
+  @@map("weekly_menu_items")
+}
+
+model DeliveryTimeSlot {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String             @db.VarChar(50)
+  startTime         DateTime           @map("start_time") @db.Time(6)
+  endTime           DateTime           @map("end_time") @db.Time(6)
+  isActive          Boolean            @default(true) @map("is_active")
+  curryOrders       CurryOrder[]
+  subscriptionMeals SubscriptionMeal[]
+
+  @@map("delivery_time_slots")
+}
+
+model DeliveryGroup {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String             @map("user_id") @db.Uuid
+  serviceDate       DateTime           @map("service_date") @db.Date
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  curryOrders       CurryOrder[]
+  user              User               @relation(fields: [userId], references: [id])
+  subscriptionMeals SubscriptionMeal[]
+
+  @@map("delivery_groups")
+}
+
+model SubscriptionMeal {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId  String            @map("subscription_id") @db.Uuid
+  serviceDate     DateTime          @map("service_date") @db.Date
+  deliverySlotId  String?           @map("delivery_slot_id") @db.Uuid
+  deliveryGroupId String?           @map("delivery_group_id") @db.Uuid
+  isPaused        Boolean           @default(false) @map("is_paused")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  mealType        String            @map("meal_type") @db.VarChar(20)
+  deliveryGroup   DeliveryGroup?    @relation(fields: [deliveryGroupId], references: [id])
+  deliverySlot    DeliveryTimeSlot? @relation(fields: [deliverySlotId], references: [id])
+  subscription    Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, serviceDate, mealType])
+  @@map("subscription_meals")
+}
+
+model MealPause {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String       @map("subscription_id") @db.Uuid
+  mealDate       DateTime     @map("meal_date") @db.Date
+  mealType       String       @map("meal_type") @db.VarChar(20)
+  pausedAt       DateTime     @default(now()) @map("paused_at") @db.Timestamptz(6)
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@map("meal_pauses")
+}
+
+model CurryTokenPackage {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String   @db.VarChar(100)
+  dietType     String   @map("diet_type") @db.VarChar(20)
+  tokenCount   Int      @map("token_count")
+  validityDays Int      @map("validity_days")
+  price        Decimal  @db.Decimal(10, 2)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("curry_token_packages")
+}
+
+model CurryWallet {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String       @map("user_id") @db.Uuid
+  dietType    String       @map("diet_type") @db.VarChar(20)
+  totalTokens Int          @map("total_tokens")
+  usedTokens  Int          @default(0) @map("used_tokens")
+  validUntil  DateTime     @map("valid_until") @db.Date
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  curryOrders CurryOrder[]
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dietType])
+  @@map("user_curry_wallets")
+}
+
+model CurryOrder {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  walletId        String            @map("wallet_id") @db.Uuid
+  cuisineType     String            @map("cuisine_type") @db.VarChar(20)
+  orderDate       DateTime          @map("order_date") @db.Date
+  deliverySlotId  String?           @map("delivery_slot_id") @db.Uuid
+  deliveryGroupId String?           @map("delivery_group_id") @db.Uuid
+  status          String            @db.VarChar(20)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  deliveryGroup   DeliveryGroup?    @relation(fields: [deliveryGroupId], references: [id])
+  deliverySlot    DeliveryTimeSlot? @relation(fields: [deliverySlotId], references: [id])
+  user            User              @relation(fields: [userId], references: [id])
+  wallet          CurryWallet       @relation(fields: [walletId], references: [id])
+
+  @@map("curry_orders")
+}
+
+model UpgradePrice {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope       String    @db.VarChar(20)
+  mealType    String?   @map("meal_type") @db.VarChar(20)
+  price       Decimal   @db.Decimal(10, 2)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  fromCuisine String?   @map("from_cuisine") @db.VarChar(20)
+  fromDiet    String?   @map("from_diet") @db.VarChar(20)
+  fromTier    PlanTier? @map("from_tier")
+  name        String    @default("Upgrade") @db.VarChar(100)
+  toCuisine   String?   @map("to_cuisine") @db.VarChar(20)
+  toDiet      String?   @map("to_diet") @db.VarChar(20)
+  toTier      PlanTier? @map("to_tier")
+
+  @@map("upgrade_prices")
+}
+
+model SubscriptionUpgrade {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId  String       @map("subscription_id") @db.Uuid
+  scope           String       @db.VarChar(20)
+  mealType        String?      @map("meal_type") @db.VarChar(20)
+  startDate       DateTime     @map("start_date") @db.Date
+  endDate         DateTime     @map("end_date") @db.Date
+  price           Decimal      @db.Decimal(10, 2)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  originalCuisine String?      @map("original_cuisine") @db.VarChar(20)
+  originalDiet    String?      @map("original_diet") @db.VarChar(20)
+  originalTier    PlanTier?    @map("original_tier")
+  targetCuisine   String?      @map("target_cuisine") @db.VarChar(20)
+  targetDiet      String?      @map("target_diet") @db.VarChar(20)
+  targetTier      PlanTier?    @map("target_tier")
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@map("subscription_upgrades")
+}
+
+model Notification {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  title     String   @db.VarChar(150)
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model Issue {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  category    String   @db.VarChar(50)
+  description String
+  status      String   @default("open") @db.VarChar(20)
+  adminId     String?  @map("admin_id") @db.Uuid
+  resolution  String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  admin       User?    @relation("AdminIssues", fields: [adminId], references: [id])
+  user        User     @relation("UserIssues", fields: [userId], references: [id])
+
+  @@map("issues")
+}
+
+model State {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String     @unique @db.VarChar(100)
+  districts District[]
+
+  @@map("states")
+}
+
+model District {
+  id       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name     String    @db.VarChar(100)
+  stateId  String    @map("state_id") @db.Uuid
+  state    State     @relation(fields: [stateId], references: [id], onDelete: Cascade)
+  pincodes Pincode[]
+
+  @@unique([stateId, name])
+  @@map("districts")
+}
+
+model Pincode {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String   @unique @db.VarChar(10)
+  districtId String   @map("district_id") @db.Uuid
+  district   District @relation(fields: [districtId], references: [id], onDelete: Cascade)
+
+  @@map("pincodes")
+}
+
 enum Role {
   USER
   ADMIN
@@ -17,440 +381,4 @@ enum PlanTier {
   BASIC
   REGULAR
   PREMIUM
-}
-
-// 1. Users table
-model User {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  phoneNumber String?  @unique @map("phone_number") @db.VarChar(15) // Now Optional
-  email       String   @unique @db.VarChar(255) // Required
-  password    String   @db.VarChar(255)         // Required (Hashed)
-  role        Role     @default(USER)
-  isActive    Boolean  @default(true) @map("is_active")
-  name        String?  @db.VarChar(100)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
-
-  addresses         Address[]
-  subscriptions     Subscription[]
-  curryWallets      CurryWallet[]
-  curryOrders       CurryOrder[]
-  notifications     Notification[]
-  deliveryGroups    DeliveryGroup[]
-  
-  // Relations for Issues
-  raisedIssues      Issue[] @relation("UserIssues")
-  resolvedIssues    Issue[] @relation("AdminIssues")
-
-  @@map("users")
-}
-
-// 2. Common points
-model CommonPoint {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String   @db.VarChar(150)
-  addressLine1 String?  @map("address_line_1") @db.Text
-  city         String?  @db.VarChar(100)
-  state        String?  @db.VarChar(100)
-  pincode      String?  @db.VarChar(10)
-  latitude     Decimal? @db.Decimal(9, 6)
-  longitude    Decimal? @db.Decimal(9, 6)
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  addresses Address[]
-
-  @@map("common_points")
-}
-
-// 3. Addresses
-model Address {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId         String   @map("user_id") @db.Uuid
-  tag            String   @db.VarChar(50)
-  addressLine1   String   @map("address_line_1") @db.Text
-  addressLine2   String?  @map("address_line_2") @db.Text
-  landmark       String?  @db.Text
-  city           String   @db.VarChar(100)
-  state          String   @db.VarChar(100)
-  pincode        String   @db.VarChar(10)
-  latitude       Decimal? @db.Decimal(9, 6)
-  longitude      Decimal? @db.Decimal(9, 6)
-  commonPointId  String?  @map("common_point_id") @db.Uuid
-  phoneNumber    String?  @map("phone_number") @db.VarChar(15)
-  isPrimary      Boolean  @default(false) @map("is_primary")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  commonPoint  CommonPoint?  @relation(fields: [commonPointId], references: [id])
-  subscriptions Subscription[]
-
-  @@map("addresses")
-}
-
-// 4. Meal packages (Metadata only)
-model MealPackage {
-  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                  String   @db.VarChar(150) // e.g. "Basic Veg North"
-  dietType              String   @map("diet_type") @db.VarChar(20) // Veg, NonVeg
-  cuisineType           String   @map("cuisine_type") @db.VarChar(20) // North, South
-  tier                  PlanTier @default(REGULAR)
-  
-  // Container info (still relevant for the package type)
-  defaultContainer      String   @map("default_container") @db.VarChar(20)
-  allowsContainerChoice Boolean  @default(false) @map("allows_container_choice")
-  
-  // Upgradability flags
-  allowsDietUpgrade     Boolean  @default(false) @map("allows_diet_upgrade")
-  allowsCuisineUpgrade  Boolean  @default(false) @map("allows_cuisine_upgrade")
-  
-  isActive              Boolean  @default(true) @map("is_active")
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  pricingOptions        PackagePricing[]
-  subscriptions         Subscription[]
-
-  @@map("meal_packages")
-}
-
-// 4.1 Package Pricing (New: Flexible durations and combinations)
-model PackagePricing {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  mealPackageId String   @map("meal_package_id") @db.Uuid
-  name          String   @db.VarChar(150) // e.g. "Weekly Tiffin Only", "Monthly All Meals"
-  
-  durationDays  Int      @map("duration_days") // 1, 7, 30
-  mealsIncluded String[] @map("meals_included") // ["TIFFIN"], ["LUNCH", "DINNER"]
-  
-  price         Decimal  @db.Decimal(10, 2)
-  isActive      Boolean  @default(true) @map("is_active")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  mealPackage   MealPackage @relation(fields: [mealPackageId], references: [id], onDelete: Cascade)
-  subscriptions Subscription[]
-
-  @@map("package_pricing")
-}
-
-// 5. Subscriptions
-model Subscription {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId        String   @map("user_id") @db.Uuid
-  mealPackageId String   @map("meal_package_id") @db.Uuid
-  pricingId     String?  @map("pricing_id") @db.Uuid // Link to the specific price plan purchased
-  
-  addressId     String   @map("address_id") @db.Uuid
-  containerType String   @map("container_type") @db.VarChar(20)
-  
-  startDate     DateTime @map("start_date") @db.Date
-  endDate       DateTime @map("end_date") @db.Date
-  
-  mealsIncluded String[] @map("meals_included") // Snapshot of what is enabled: ["TIFFIN", "LUNCH"]
-  status        String   @db.VarChar(20) // ACTIVE, PAUSED, EXPIRED, CANCELLED
-  
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  user          User           @relation(fields: [userId], references: [id])
-  mealPackage   MealPackage    @relation(fields: [mealPackageId], references: [id])
-  pricing       PackagePricing? @relation(fields: [pricingId], references: [id])
-  address       Address        @relation(fields: [addressId], references: [id])
-
-  meals         SubscriptionMeal[]
-  pauses        MealPause[]
-  upgrades      SubscriptionUpgrade[]
-
-  @@map("subscriptions")
-}
-
-// 6. Categories (Hierarchy for Menu)
-model Category {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String   @db.VarChar(100)
-  description String?  @db.Text
-  parentId    String?  @map("parent_id") @db.Uuid
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-  
-  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children    Category[] @relation("CategoryHierarchy")
-  menuItems   MenuItem[]
-
-  @@map("categories")
-}
-
-// 7. Menu Items
-model MenuItem {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String   @db.VarChar(150)
-  categoryId  String?  @map("category_id") @db.Uuid
-  description String?  @db.Text
-  dietType    String?  @map("diet_type") @db.VarChar(20) // Added
-  cuisineType String?  @map("cuisine_type") @db.VarChar(20) // Added
-  imageUrl    String?  @map("image_url") @db.Text
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  category        Category?        @relation(fields: [categoryId], references: [id])
-  weeklyMenuItems WeeklyMenuItem[]
-
-  @@map("menu_items")
-}
-
-// 8. Weekly menus
-model WeeklyMenu {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  dietType      String   @map("diet_type") @db.VarChar(20)
-  cuisineType   String   @map("cuisine_type") @db.VarChar(20)
-  tier          PlanTier @default(REGULAR)
-  weekStartDate DateTime @map("week_start_date") @db.Date // Determine the week
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  items WeeklyMenuItem[]
-
-  @@unique([dietType, cuisineType, tier, weekStartDate])
-  @@map("weekly_menus")
-}
-
-// 9. Weekly menu items
-model WeeklyMenuItem {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  weeklyMenuId  String   @map("weekly_menu_id") @db.Uuid
-  
-  // e.g. 'TIFFIN', 'LUNCH', 'DINNER' - Corresponds to mealsIncluded
-  mealType      String   @map("meal_type") @db.VarChar(20) 
-  
-  dayOfWeek     Int      @map("day_of_week") // 1=Monday
-  
-  menuItemId    String?  @map("menu_item_id") @db.Uuid
-  itemName      String   @map("item_name") @db.Text
-  
-  weeklyMenu    WeeklyMenu @relation(fields: [weeklyMenuId], references: [id], onDelete: Cascade)
-  menuItem      MenuItem?  @relation(fields: [menuItemId], references: [id])
-
-  @@map("weekly_menu_items")
-}
-
-// 8. Delivery time slots (unchanged but context)
-model DeliveryTimeSlot {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name      String   @db.VarChar(50)
-  startTime DateTime @map("start_time") @db.Time
-  endTime   DateTime @map("end_time") @db.Time
-  isActive  Boolean  @default(true) @map("is_active")
-
-  subscriptionMeals SubscriptionMeal[]
-  curryOrders       CurryOrder[]
-
-  @@map("delivery_time_slots")
-}
-
-// 9. Delivery groups (unchanged)
-model DeliveryGroup {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
-  serviceDate DateTime @map("service_date") @db.Date
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  user              User               @relation(fields: [userId], references: [id])
-  subscriptionMeals SubscriptionMeal[]
-  curryOrders       CurryOrder[]
-
-  @@map("delivery_groups")
-}
-
-// 10. Subscription meals
-model SubscriptionMeal {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  subscriptionId  String   @map("subscription_id") @db.Uuid
-  serviceDate     DateTime @map("service_date") @db.Date
-  
-  // Matches mealsIncluded e.g. 'TIFFIN', 'LUNCH'
-  mealType        String   @map("meal_type") @db.VarChar(20) 
-  
-  deliverySlotId  String?  @map("delivery_slot_id") @db.Uuid
-  deliveryGroupId String?  @map("delivery_group_id") @db.Uuid
-  isPaused        Boolean  @default(false) @map("is_paused")
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  subscription    Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  deliverySlot    DeliveryTimeSlot? @relation(fields: [deliverySlotId], references: [id])
-  deliveryGroup   DeliveryGroup?    @relation(fields: [deliveryGroupId], references: [id])
-
-  @@unique([subscriptionId, serviceDate, mealType])
-  @@map("subscription_meals")
-}
-
-// 11. Meal pauses
-model MealPause {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  subscriptionId String   @map("subscription_id") @db.Uuid
-  mealDate       DateTime @map("meal_date") @db.Date
-  mealType       String   @map("meal_type") @db.VarChar(20)
-  pausedAt       DateTime @default(now()) @map("paused_at") @db.Timestamptz
-
-  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-
-  @@map("meal_pauses")
-}
-
-// 12. Curry token packages
-model CurryTokenPackage {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String   @db.VarChar(100)
-  dietType     String   @map("diet_type") @db.VarChar(20)
-  tokenCount   Int      @map("token_count")
-  validityDays Int      @map("validity_days")
-  price        Decimal  @db.Decimal(10, 2)
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  @@map("curry_token_packages")
-}
-
-// 13. User curry wallets
-model CurryWallet {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId     String   @map("user_id") @db.Uuid
-  dietType   String   @map("diet_type") @db.VarChar(20)
-  totalTokens Int     @map("total_tokens")
-  usedTokens  Int     @default(0) @map("used_tokens")
-  validUntil  DateTime @map("valid_until") @db.Date
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  curryOrders CurryOrder[]
-
-  @@unique([userId, dietType])
-  @@map("user_curry_wallets")
-}
-
-// 14. Curry orders
-model CurryOrder {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId          String   @map("user_id") @db.Uuid
-  walletId        String   @map("wallet_id") @db.Uuid
-  cuisineType     String   @map("cuisine_type") @db.VarChar(20)
-  orderDate       DateTime @map("order_date") @db.Date
-  deliverySlotId  String?  @map("delivery_slot_id") @db.Uuid
-  deliveryGroupId String?  @map("delivery_group_id") @db.Uuid
-  status          String   @db.VarChar(20)
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  user          User              @relation(fields: [userId], references: [id])
-  wallet        CurryWallet       @relation(fields: [walletId], references: [id])
-  deliverySlot  DeliveryTimeSlot? @relation(fields: [deliverySlotId], references: [id])
-  deliveryGroup DeliveryGroup?    @relation(fields: [deliveryGroupId], references: [id])
-
-  @@map("curry_orders")
-}
-
-// 15. Upgrade prices
-// 15. Upgrade prices
-model UpgradePrice {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String    @default("Upgrade") @db.VarChar(100)
-  fromTier    PlanTier? @map("from_tier")
-  toTier      PlanTier? @map("to_tier")
-  fromDiet    String?   @map("from_diet") @db.VarChar(20)
-  toDiet      String?   @map("to_diet")   @db.VarChar(20)
-  fromCuisine String?   @map("from_cuisine") @db.VarChar(20) // Added
-  toCuisine   String?   @map("to_cuisine")   @db.VarChar(20) // Added
-  scope       String    @db.VarChar(20) // MEAL, DAY, WEEK
-  mealType    String?   @map("meal_type") @db.VarChar(20) 
-  price       Decimal   @db.Decimal(10, 2)
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
-
-  @@map("upgrade_prices")
-}
-
-// 16. Subscription upgrades
-model SubscriptionUpgrade {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  subscriptionId String    @map("subscription_id") @db.Uuid
-  
-  targetTier     PlanTier? @map("target_tier")
-  targetDiet     String?   @map("target_diet") @db.VarChar(20)
-  targetCuisine  String?   @map("target_cuisine") @db.VarChar(20) // Added
-  
-  originalTier   PlanTier? @map("original_tier") 
-  originalDiet   String?   @map("original_diet") @db.VarChar(20) 
-  originalCuisine String?  @map("original_cuisine") @db.VarChar(20) // Added
-  
-  scope          String    @db.VarChar(20)
-  mealType       String?   @map("meal_type") @db.VarChar(20)
-  startDate      DateTime  @map("start_date") @db.Date
-  endDate        DateTime  @map("end_date") @db.Date
-  price          Decimal   @db.Decimal(10, 2)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
-
-  subscription Subscription @relation(fields: [subscriptionId], references: [id])
-
-  @@map("subscription_upgrades")
-}
-
-// 17. Notifications
-model Notification {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  title     String   @db.VarChar(150)
-  message   String   @db.Text
-  isRead    Boolean  @default(false) @map("is_read")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("notifications")
-}
-
-// 18. Issues (Support Tickets)
-model Issue {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
-  category    String   @db.VarChar(50) // e.g., 'delivery', 'food_quality', 'app'
-  description String   @db.Text
-  status      String   @default("open") @db.VarChar(20) // 'open', 'resolved', 'closed'
-  adminId     String?  @map("admin_id") @db.Uuid // Admin who resolved it
-  resolution  String?  @db.Text
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
-
-  user  User  @relation("UserIssues", fields: [userId], references: [id])
-  admin User? @relation("AdminIssues", fields: [adminId], references: [id])
-
-  @@map("issues")
-}
-
-// 19. Master Data: States
-model State {
-  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name      String     @unique @db.VarChar(100)
-  
-  districts District[]
-
-  @@map("states")
-}
-
-// 20. Master Data: Districts
-model District {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name      String    @db.VarChar(100)
-  stateId   String    @map("state_id") @db.Uuid
-  
-  state     State     @relation(fields: [stateId], references: [id], onDelete: Cascade)
-  pincodes  Pincode[]
-
-  @@unique([stateId, name])
-  @@map("districts")
-}
-
-// 21. Master Data: Pincodes
-model Pincode {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code       String   @unique @db.VarChar(10) // 6 digits typically
-  districtId String   @map("district_id") @db.Uuid
-  
-  district   District @relation(fields: [districtId], references: [id], onDelete: Cascade)
-
-  @@map("pincodes")
 }
