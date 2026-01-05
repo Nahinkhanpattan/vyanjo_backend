@@ -37,6 +37,7 @@ const adminAuthRoutes = require("./routes/adminAuthRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const issueRoutes = require("./routes/issueRoutes");
 const curryRoutes = require("./routes/curryRoutes");
+const deliveryRoutes = require("./routes/deliveryRoutes");
 
 // Routes
 app.use("/api/auth", authRoutes);
@@ -50,6 +51,7 @@ app.use("/api/menus", menuRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/curry", curryRoutes);
 app.use("/api/master-data", require("./routes/masterDataRoutes"));
+app.use("/api/delivery", deliveryRoutes);
 
 // Centralized Error Handling
 // Centralized Error Handling

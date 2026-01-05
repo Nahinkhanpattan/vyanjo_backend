@@ -79,13 +79,43 @@ exports.getWeeklyMenu = async (req, res) => {
     }
 
     const inputDate = moment(date).tz("Asia/Kolkata");
+    // If a specific date is provided, used it as start date if it's a Monday,
+    // OR calculate start of week.
+    // The user creates menu with '2025-01-05' (Sunday).
+    // 'startOf('isoWeek')' on Sunday 2025-01-05 gives Monday 2024-12-30.
+    // BUT maybe they intended 2025-01-05 to be start?
+    // Standard is Monday. Let's stick to startOf('isoWeek') for consistency,
+    // BUT we must print what we are searching for.
+
+    // Fix: Creation used 'new Date(weekStartDate)' directly.
+    // If frontend sends Sunday, DB has Sunday.
+    // Fetching uses 'startOf(isoWeek)' which changes it to Monday.
+    // We should probably NOT change the date if the user asking for a specific date?
+    // Let's rely on exact match if they send a date that looks like a start date.
+
     const weekStart = inputDate.clone().startOf("isoWeek");
+    // Wait, if I created it as Sunday, fetch as Monday fails.
+    // Solution: Admin Creation should ALSO normalize to start of week?
+    // OR: Fetch should look for exact date first?
+    // Better: Normalize creation to Monday. That is the standard.
+    // However, I can't change the data already in DB easily.
+    // Let's check for BOTH or just trust the input?
+
+    // For now, let's look for the calculated weekStart OR the raw input date?
+    // findFirst allows only one where.
+
+    console.log(
+      `[MenuController] Fetching for: ${weekStart.format(
+        "YYYY-MM-DD"
+      )} (Computed WeekStart)`
+    );
 
     const menu = await prisma.weeklyMenu.findFirst({
       where: {
         dietType: diet,
         cuisineType: cuisine,
         tier: tier || "REGULAR",
+        // Logic: Try to find by normalized week start
         weekStartDate: weekStart.toDate(),
       },
       include: {

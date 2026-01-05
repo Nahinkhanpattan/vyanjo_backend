@@ -1,5 +1,6 @@
 const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../prisma");
+const moment = require("moment-timezone");
 
 // --- Users Management ---
 exports.getAllUsers = async (req, res) => {
@@ -223,11 +224,9 @@ exports.createMealPackage = async (req, res) => {
     // { dietType, cuisineType, durationDays, mealsIncluded: [], price }
 
     if (!pricings || !Array.isArray(pricings) || pricings.length === 0) {
-      return res
-        .status(400)
-        .json({
-          error: { message: "At least one pricing variant is required" },
-        });
+      return res.status(400).json({
+        error: { message: "At least one pricing variant is required" },
+      });
     }
 
     // 1. Group pricings by Diet + Cuisine
@@ -583,31 +582,114 @@ exports.deleteMenuItem = async (req, res) => {
   }
 };
 
-// --- Menu Management ---
 exports.createWeeklyMenu = async (req, res) => {
+  console.log("[AdminController] createWeeklyMenu", req.body);
   try {
-    const { dietType, cuisineType, weekStartDate, items, tier } = req.body;
+    // New Payload Structure:
+    // {
+    //    weekStartDate: "YYYY-MM-DD",
+    //    variants: [ { dietType, cuisineType, tier } ], // Array of targets
+    //    days: [
+    //      {
+    //        dayOfWeek: 1,
+    //        meals: [
+    //          { type: 'TIFFIN', items: [ { menuItemId: "uuid", categoryId: "uuid" } ] }
+    //        ]
+    //      }
+    //    ]
+    // }
 
-    // Items is array of: { mealType: 'TIFFIN'|'LUNCH'|'DINNER', dayOfWeek: 1, menuItemId: 'uuid', itemName: '...' }
+    // Simplification for MVP as per prompt:
+    // user selects variant (veg, north, basic) -> creates menu.
+    // "creates menu for all variants at once or only one at once"
 
-    const result = await prisma.$transaction(async (prisma) => {
-      const menu = await prisma.weeklyMenu.create({
-        data: {
-          dietType,
-          cuisineType,
-          tier: tier || "REGULAR",
-          weekStartDate: new Date(weekStartDate),
-          items: {
-            create: items,
+    // Let's support the 'variants' array.
+
+    const { weekStartDate, variants, days } = req.body;
+
+    if (!weekStartDate || !variants || !days) {
+      return res
+        .status(400)
+        .json({ error: { message: "Missing required fields" } });
+    }
+
+    const createdMenus = [];
+
+    await prisma.$transaction(async (tx) => {
+      for (const variant of variants) {
+        const { dietType, cuisineType, tier } = variant;
+
+        // Normalize start date to Monday to match fetch logic
+        // This prevents the "Created on Sunday, Searching for Monday" mismatch
+        const normalizedWeekStart = moment(weekStartDate)
+          .tz("Asia/Kolkata")
+          .startOf("isoWeek")
+          .toDate();
+
+        // 1. Find or Create the WeeklyMenu container
+        // Using upsert to handle the "Unique constraint failed" error
+        const menu = await tx.weeklyMenu.upsert({
+          where: {
+            dietType_cuisineType_tier_weekStartDate: {
+              dietType,
+              cuisineType,
+              tier: tier || "REGULAR",
+              weekStartDate: normalizedWeekStart,
+            },
           },
-        },
-        include: { items: true },
-      });
-      return menu;
+          update: {}, // Don't change if exists, just get ID to update items
+          create: {
+            dietType,
+            cuisineType,
+            tier: tier || "REGULAR",
+            weekStartDate: normalizedWeekStart,
+          },
+        });
+
+        createdMenus.push(menu);
+
+        // 2. Wipe existing items for this menu to ensure clean state (optional but safer for "re-creation")
+        await tx.weeklyMenuItem.deleteMany({
+          where: { weeklyMenuId: menu.id },
+        });
+
+        // 3. Create new items
+        for (const day of days) {
+          for (const meal of day.meals) {
+            // meal: { type: 'LUNCH', items: [...] }
+            for (const item of meal.items) {
+              // item: { menuItemId, nameOverride? }
+              // If menuItemId provided, fetch name. Else use manual name.
+
+              let itemName = item.name;
+              let menuItemId = item.menuItemId;
+
+              if (menuItemId) {
+                const dbItem = await tx.menuItem.findUnique({
+                  where: { id: menuItemId },
+                });
+                if (dbItem) itemName = dbItem.name;
+              }
+
+              await tx.weeklyMenuItem.create({
+                data: {
+                  weeklyMenuId: menu.id,
+                  dayOfWeek: day.dayOfWeek,
+                  mealType: meal.type, // TIFFIN, LUNCH
+                  menuItemId: menuItemId,
+                  itemName: itemName || "Unknown Item", // Fallback
+                },
+              });
+            }
+          }
+        }
+      }
     });
-    res
-      .status(201)
-      .json({ data: { menu: result }, message: "Weekly Menu created" });
+
+    res.status(201).json({
+      data: { count: createdMenus.length, ids: createdMenus.map((m) => m.id) },
+      message: `Menu created for ${createdMenus.length} variants`,
+    });
   } catch (error) {
     console.error("Create Menu Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
