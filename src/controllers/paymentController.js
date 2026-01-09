@@ -36,16 +36,17 @@ exports.submitPaymentProof = async (req, res) => {
       transactionId,
       payerName,
       payerMobile,
+      screenshotUrl, // Direct URL from frontend
     } = req.body;
 
-    // Check if file uploaded
-    if (!req.file) {
+    // Check if screenshotUrl is provided
+    if (!screenshotUrl) {
       return res
         .status(400)
-        .json({ error: { message: "Screenshot is required" } });
+        .json({ error: { message: "Screenshot URL is required" } });
     }
 
-    const screenshotUrl = req.file.path; // Cloudinary URL
+    // const screenshotUrl = req.file.path; // REMOVED: Using body url
 
     // Validate Subscription or Curry Package
     if (!subscriptionId && !curryTokenPackageId) {
@@ -95,6 +96,32 @@ exports.submitPaymentProof = async (req, res) => {
     });
   } catch (error) {
     console.error("Submit Payment Proof Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+// Get User's Payment History
+exports.getUserPaymentHistory = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const history = await prisma.paymentProof.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        subscription: {
+          select: {
+            id: true,
+            status: true,
+            startDate: true,
+            endDate: true,
+          },
+        },
+      },
+    });
+
+    res.json({ data: { history } });
+  } catch (error) {
+    console.error("Get Payment History Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };

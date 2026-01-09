@@ -6,11 +6,8 @@ const { upload } = require("../utils/cloudinary");
 
 router.get("/config", authenticate, paymentController.getPaymentConfig);
 
-router.post(
-  "/submit",
-  authenticate,
-  upload.single("screenshot"), // 'screenshot' is the form field name
-  paymentController.submitPaymentProof
-);
+router.post("/submit", authenticate, paymentController.submitPaymentProof);
+
+router.get("/history", authenticate, paymentController.getUserPaymentHistory);
 
 module.exports = router;
