@@ -827,3 +827,323 @@ exports.updateSubscription = async (req, res) => {
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
+
+// --- Delivery Time Slots Management ---
+exports.getAllDeliveryTimeSlots = async (req, res) => {
+  try {
+    const timeSlots = await prisma.deliveryTimeSlot.findMany({
+      orderBy: { startTime: "asc" },
+    });
+    res.json({ data: { timeSlots } });
+  } catch (error) {
+    console.error("Get Time Slots Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.createDeliveryTimeSlot = async (req, res) => {
+  try {
+    const { name, startTime, endTime } = req.body;
+    const timeSlot = await prisma.deliveryTimeSlot.create({
+      data: {
+        name,
+        startTime: new Date(startTime),
+        endTime: new Date(endTime),
+        isActive: true,
+      },
+    });
+    res.status(201).json({ data: { timeSlot }, message: "Time Slot created" });
+  } catch (error) {
+    console.error("Create Time Slot Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.updateDeliveryTimeSlot = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, startTime, endTime, isActive } = req.body;
+
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (startTime) updateData.startTime = new Date(startTime);
+    if (endTime) updateData.endTime = new Date(endTime);
+    if (typeof isActive === "boolean") updateData.isActive = isActive;
+
+    const timeSlot = await prisma.deliveryTimeSlot.update({
+      where: { id },
+      data: updateData,
+    });
+    res.json({ data: { timeSlot }, message: "Time Slot updated" });
+  } catch (error) {
+    console.error("Update Time Slot Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.deleteDeliveryTimeSlot = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const timeSlot = await prisma.deliveryTimeSlot.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    res.json({ data: { timeSlot }, message: "Time Slot deactivated" });
+  } catch (error) {
+    console.error("Delete Time Slot Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+// --- Common Points Extension ---
+exports.getAllCommonPoints = async (req, res) => {
+  try {
+    const commonPoints = await prisma.commonPoint.findMany({
+      orderBy: { name: "asc" },
+    });
+    res.json({ data: { commonPoints } });
+  } catch (error) {
+    console.error("Get All Common Points Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+// --- Address Management ---
+exports.getAllAddresses = async (req, res) => {
+  try {
+    const addresses = await prisma.address.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { name: true, phoneNumber: true, email: true } },
+        commonPoint: true,
+      },
+    });
+    res.json({ data: { addresses } });
+  } catch (error) {
+    console.error("Get All Addresses Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.updateAddress = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = req.body;
+    const address = await prisma.address.update({
+      where: { id },
+      data,
+    });
+    res.json({ data: { address }, message: "Address updated" });
+  } catch (error) {
+    console.error("Update Address Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.deleteAddress = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.address.delete({
+      where: { id },
+    });
+    res.json({ message: "Address deleted" });
+  } catch (error) {
+    console.error("Delete Address Error:", error);
+    if (error.code === "P2003") {
+      return res.status(400).json({
+        error: {
+          message: "Cannot delete address associated with subscriptions",
+        },
+      });
+    }
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+// --- Payment Configuration ---
+
+exports.createPaymentDetails = async (req, res) => {
+  try {
+    const {
+      bankName,
+      accountNumber,
+      ifscCode,
+      accountHolderName,
+      upiId,
+      qrCodeUrl, // Assuming uploaded via frontend or separate upload API first
+    } = req.body;
+
+    // Optional: Deactivate previous details if we only want one active
+    await prisma.adminPaymentDetails.updateMany({
+      data: { isActive: false },
+    });
+
+    const details = await prisma.adminPaymentDetails.create({
+      data: {
+        bankName,
+        accountNumber,
+        ifscCode,
+        accountHolderName,
+        upiId,
+        qrCodeUrl,
+        isActive: true,
+      },
+    });
+
+    res
+      .status(201)
+      .json({ data: { details }, message: "Payment details saved" });
+  } catch (error) {
+    console.error("Create Payment Details Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.getPaymentDetailsAdmin = async (req, res) => {
+  try {
+    const details = await prisma.adminPaymentDetails.findFirst({
+      where: { isActive: true },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ data: { details } });
+  } catch (error) {
+    console.error("Get Payment Details Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+// --- Payment Verification ---
+
+exports.getAllPaymentProofs = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const where = {};
+    if (status) where.status = status;
+
+    const proofs = await prisma.paymentProof.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { name: true, phoneNumber: true, email: true } },
+        subscription: { include: { mealPackage: true, pricing: true } },
+        // Add curryTokenPackage include if needed
+      },
+    });
+
+    res.json({ data: { proofs } });
+  } catch (error) {
+    console.error("Get All Payment Proofs Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.verifyPaymentProof = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user.id; // Corrected: user.id from req.user
+
+    // 1. Get Proof
+    const proof = await prisma.paymentProof.findUnique({
+      where: { id },
+      include: { subscription: true },
+    });
+
+    if (!proof) {
+      return res.status(404).json({ error: { message: "Proof not found" } });
+    }
+
+    if (proof.status === "VERIFIED") {
+      return res.status(400).json({ error: { message: "Already verified" } });
+    }
+
+    // 2. Update Proof Status
+    await prisma.paymentProof.update({
+      where: { id },
+      data: {
+        status: "VERIFIED",
+        verifiedBy: adminId,
+        verifiedAt: new Date(),
+      },
+    });
+
+    // 3. Activate Subscription
+    if (proof.subscriptionId) {
+      await prisma.subscription.update({
+        where: { id: proof.subscriptionId },
+        data: { status: "active" }, // Activate!
+      });
+
+      // TRIGGER MEAL GENERATION HERE?
+      // Logic was in subscriptionController.createSubscription.
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: proof.subscriptionId },
+        include: { pricing: true, mealPackage: true },
+      });
+
+      if (subscription && subscription.pricing) {
+        const start = moment(subscription.startDate).tz("Asia/Kolkata");
+        const duration = subscription.pricing.durationDays;
+        const itemTypes = subscription.mealsIncluded;
+        const mealsToCreate = [];
+
+        for (let i = 0; i < duration; i++) {
+          const currentDate = start.clone().add(i, "days");
+          for (const type of itemTypes) {
+            mealsToCreate.push({
+              subscriptionId: subscription.id,
+              serviceDate: currentDate.toDate(),
+              mealType: type,
+            });
+          }
+        }
+
+        if (mealsToCreate.length > 0) {
+          await prisma.subscriptionMeal.createMany({
+            data: mealsToCreate,
+            skipDuplicates: true, // Safety
+          });
+        }
+      }
+    }
+
+    // TODO: Send Notification (Optional)
+
+    res.json({ message: "Payment verified and subscription activated" });
+  } catch (error) {
+    console.error("Verify Payment Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.rejectPaymentProof = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user.id;
+
+    const proof = await prisma.paymentProof.findUnique({ where: { id } });
+    if (!proof)
+      return res.status(404).json({ error: { message: "Proof not found" } });
+
+    await prisma.paymentProof.update({
+      where: { id },
+      data: {
+        status: "REJECTED",
+        verifiedBy: adminId,
+        verifiedAt: new Date(),
+      },
+    });
+
+    // If subscription linked, maybe mark as 'cancelled' or 'payment_failed'
+    if (proof.subscriptionId) {
+      await prisma.subscription.update({
+        where: { id: proof.subscriptionId },
+        data: { status: "payment_failed" },
+      });
+    }
+
+    res.json({ message: "Payment rejected" });
+  } catch (error) {
+    console.error("Reject Payment Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};

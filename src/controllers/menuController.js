@@ -153,3 +153,71 @@ exports.getWeeklyMenu = async (req, res) => {
     });
   }
 };
+
+exports.getAllMenus = async (req, res) => {
+  try {
+    const menus = await prisma.weeklyMenu.findMany({
+      orderBy: { weekStartDate: "desc" },
+      include: {
+        items: {
+          include: { menuItem: { include: { category: true } } },
+        },
+      },
+    });
+
+    res.json({
+      data: {
+        menus,
+        count: menus.length,
+      },
+      message: "Menus retrieved successfully",
+    });
+  } catch (error) {
+    console.error("Get All Menus Error:", error);
+    res.status(500).json({
+      error: {
+        message: "Internal server error",
+        code: "SERVER_ERROR",
+        status: 500,
+      },
+    });
+  }
+};
+
+exports.deleteMenu = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const menu = await prisma.weeklyMenu.findUnique({
+      where: { id },
+    });
+
+    if (!menu) {
+      return res.status(404).json({
+        error: {
+          message: "Menu not found",
+          code: "MENU_NOT_FOUND",
+          status: 404,
+        },
+      });
+    }
+
+    await prisma.weeklyMenu.delete({
+      where: { id },
+    });
+
+    res.json({
+      message: "Menu deleted successfully",
+      data: { id },
+    });
+  } catch (error) {
+    console.error("Delete Menu Error:", error);
+    res.status(500).json({
+      error: {
+        message: "Internal server error",
+        code: "SERVER_ERROR",
+        status: 500,
+      },
+    });
+  }
+};

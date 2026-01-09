@@ -2051,6 +2051,107 @@ model Issue {
 }
 ```
 
+#### GET /api/admin/time-slots
+
+**Purpose**: List all delivery time slots.
+
+**Response**:
+
+```json
+{
+  "data": {
+    "timeSlots": [
+      {
+        "id": "uuid",
+        "name": "Lunch Slot",
+        "startTime": "12:00:00",
+        "endTime": "13:00:00",
+        "isActive": true
+      }
+    ]
+  }
+}
+```
+
+#### POST /api/admin/time-slots
+
+**Purpose**: Create a new delivery time slot.
+
+**Request Body**:
+
+```json
+{
+  "name": "Dinner Slot",
+  "startTime": "2023-01-01T19:00:00.000Z",
+  "endTime": "2023-01-01T20:00:00.000Z"
+}
+```
+
+#### PUT /api/admin/time-slots/:id
+
+**Purpose**: Update a delivery time slot.
+
+**Request Body**:
+
+```json
+{
+  "name": "Updated Slot Name",
+  "isActive": false
+}
+```
+
+#### DELETE /api/admin/time-slots/:id
+
+**Purpose**: Deactivate a delivery time slot.
+
+#### GET /api/admin/common-points
+
+**Purpose**: List all common points for admin review.
+
+**Response**:
+
+```json
+{
+  "data": {
+    "commonPoints": [
+      {
+        "id": "uuid",
+        "name": "Tech Park",
+        "city": "Hyderabad"
+      }
+    ]
+  }
+}
+```
+
+#### GET /api/admin/addresses
+
+**Purpose**: List all user addresses.
+
+**Response**:
+
+```json
+{
+  "data": {
+    "addresses": [
+      {
+        "id": "uuid",
+        "user": { "name": "John Doe", "phoneNumber": "..." },
+        "addressLine1": "..."
+      }
+    ]
+  }
+}
+```
+
+#### PUT /api/admin/addresses/:id
+
+**Purpose**: Update any address (admin override).
+
+#### DELETE /api/admin/addresses/:id
+
+**Purpose**: Delete an address (if not linked to active subscription).
+
 ## Implementation File Structure
 
 ### Controllers Layer (`src/controllers/`)
@@ -2270,6 +2371,137 @@ module.exports = router;
 **Purpose**: Create a pincode.
 
 **Request Body**: `{ "code": "560001", "districtId": "uuid" }`
+
+---
+
+### Module 15: Payment System (Manual Verification)
+
+**Base Path**: `/api/payment` (User) and `/api/admin` (Admin)
+
+#### POST /api/payment/submit
+
+**Purpose**: User submits proof of payment (Screenshot + UTR).
+
+**Authentication**: Required
+
+**Request Headers**: `Content-Type: multipart/form-data`
+
+**Request Body**:
+
+- `screenshot`: File (Image)
+- `subscriptionId`: "uuid" (Optional if curryTokenPackageId provided)
+- `curryTokenPackageId`: "uuid" (Optional if subscriptionId provided)
+- `amount`: "1500.00"
+- `transactionId`: "UTR123456789"
+- `payerName`: "John Doe" (Optional)
+
+**Response**:
+
+```json
+{
+  "data": {
+    "proof": {
+      "id": "uuid",
+      "status": "PENDING",
+      "screenshotUrl": "https://res.cloudinary.com/..."
+    }
+  },
+  "message": "Payment submitted successfully. Pending verification."
+}
+```
+
+#### GET /api/payment/config
+
+**Purpose**: Get admin's payment details (Bank/UPI) for the user to make a transfer.
+
+**Authentication**: Required
+
+**Response**:
+
+```json
+{
+  "data": {
+    "details": {
+      "bankName": "HDFC",
+      "accountNumber": "...",
+      "qrCodeUrl": "..."
+    }
+  }
+}
+```
+
+#### POST /api/admin/payment-details
+
+**Purpose**: Admin configures bank/UPI details and QR code.
+
+**Authentication**: Admin Required
+
+**Request Body**:
+
+```json
+{
+  "bankName": "HDFC Bank",
+  "accountNumber": "1234567890",
+  "ifscCode": "HDFC0001234",
+  "accountHolderName": "Vyanjo Foods",
+  "upiId": "vyanjo@hdfc",
+  "qrCodeUrl": "https://cloudinary.com/..."
+}
+```
+
+#### GET /api/admin/payments
+
+**Purpose**: Admin views list of payment proofs.
+
+**Authentication**: Admin Required
+
+**Query Params**: `?status=PENDING` (or VERIFIED, REJECTED)
+
+**Response**:
+
+```json
+{
+  "data": {
+    "proofs": [
+      {
+        "id": "uuid",
+        "status": "PENDING",
+        "user": { "name": "John" },
+        "amount": "1500",
+        "screenshotUrl": "..."
+      }
+    ]
+  }
+}
+```
+
+#### POST /api/admin/payments/:id/verify
+
+**Purpose**: Verify a payment proof and **activate** the linked subscription.
+
+**Authentication**: Admin Required
+
+**Response**:
+
+```json
+{
+  "message": "Payment verified and subscription activated"
+}
+```
+
+#### POST /api/admin/payments/:id/reject
+
+**Purpose**: Reject a payment proof.
+
+**Authentication**: Admin Required
+
+**Response**:
+
+```json
+{
+  "message": "Payment rejected"
+}
+```
 
 ---
 

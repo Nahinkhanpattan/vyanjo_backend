@@ -72,90 +72,19 @@ exports.createSubscription = async (req, res) => {
         containerType: container_type || mealPackage.defaultContainer,
         startDate: start.toDate(),
         endDate: end.toDate(),
-        mealsIncluded: pricing.mealsIncluded, // ['TIFFIN', 'LUNCH']
-        status: "active",
+        mealsIncluded: pricing.mealsIncluded,
+        status: "pending_payment", // Changed from 'active'
       },
     });
 
-    // Generate SubscriptionMeals
-    const mealsToCreate = [];
-    const itemTypes = pricing.mealsIncluded; // array of strings
-
-    for (let i = 0; i < duration; i++) {
-      const currentDate = start.clone().add(i, "days");
-      for (const type of itemTypes) {
-        // e.g. "TIFFIN", "LUNCH"
-        mealsToCreate.push({
-          subscriptionId: subscription.id,
-          serviceDate: currentDate.toDate(),
-          mealType: type,
-          // deliverySlotId can be assigned later based on type
-        });
-      }
-    }
-
-    // Validate Time Slots against Combo Logic
-    // If user provides specific slots (assuming slot_preferences passed in body)
-    // slot_preferences: { 'TIFFIN': 'slot_id', 'LUNCH': 'slot_id' }
-    if (req.body.slot_preferences) {
-      const { slot_preferences } = req.body;
-      const mealsIncluded = pricing.mealsIncluded; // ['TIFFIN', 'LUNCH'] etc.
-
-      // Load all slots to check times
-      const allSlots = await prisma.deliveryTimeSlot.findMany({
-        where: { isActive: true },
-      });
-      const slotMap = new Map(allSlots.map((s) => [s.id, s]));
-
-      if (slot_preferences["LUNCH"]) {
-        const lunchSlot = slotMap.get(slot_preferences["LUNCH"]);
-        if (lunchSlot) {
-          // Lunch Start Time
-          const lunchHour = new Date(lunchSlot.startTime).getUTCHours(); // Careful with UTC vs Local in DB
-          // Assuming DB Time is UTC epoch 1970-01-01.
-          // If Lunch is early (e.g. < 10 AM, say 7, 8, 9), it requires Tiffin to be included.
-
-          // Let's assume standard Lunch starts at 10 (Hour 10). Tiffin starts at 5.
-          // Note: DB stores times. We need to parse correctly.
-          // Simplifying assumption: Early slots are defined by valid range. Or just standard check.
-
-          // If lunchHour < 10 (Standard Lunch Start)
-          // We check if TIFFIN is part of the package OR 'TIFFIN' is in slot_preferences
-          // Correction: Package determines eligibility.
-
-          // Time comparison might be tricky without full date.
-          // Let's rely on checking if it matches Tiffin Slots?
-          // Simpler: If Tiffin is included, we ALLOW any valid slot. User UI filters.
-          // But Prompt says: "if not then from 10 is accepted". Implies strict backend check.
-
-          // Let's assume early lunch is < 10:00.
-          // We'll trust the Slot Name or ID for now, or just implement the logic:
-          // If (Lunch Slot Start < 10:00) AND (!mealsIncluded.includes('TIFFIN')) -> Error
-
-          /* 
-                   Checking extraction: startTime is Date object 1970-01-01THH:mm:ss.000Z
-                   If stored as UTC, we need timezone offset.
-                   Actually, let's look at the hour value directly.
-                */
-
-          // For robust check, we'd need to know exactly what "early" means in DB values.
-          // Skipping complex time parsing for now, adding placeholder logical check.
-          // Real implementation would compare `lunchSlot.startTime` hours.
-        }
-      }
-    }
-
-    if (mealsToCreate.length > 0) {
-      await prisma.subscriptionMeal.createMany({
-        data: mealsToCreate,
-      });
-    }
+    // NOTE: Meal generation is now DEFERRED until Payment Verification by Admin.
+    // See adminController.verifyPaymentProof
 
     res.status(201).json({
       data: {
         subscription,
       },
-      message: "Subscription created successfully",
+      message: "Subscription created. Please upload payment proof to activate.",
     });
   } catch (error) {
     console.error("Create Subscription Error:", error);

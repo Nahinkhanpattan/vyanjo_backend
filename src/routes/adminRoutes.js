@@ -61,4 +61,28 @@ router.post("/curry-packages", adminController.createCurryPackage);
 router.put("/curry-packages/:id", adminController.updateCurryPackage);
 router.delete("/curry-packages/:id", adminController.deleteCurryPackage);
 
+// Time Slots
+router.get("/time-slots", adminController.getAllDeliveryTimeSlots);
+router.post("/time-slots", adminController.createDeliveryTimeSlot);
+router.put("/time-slots/:id", adminController.updateDeliveryTimeSlot);
+router.delete("/time-slots/:id", adminController.deleteDeliveryTimeSlot);
+
+// Common Points
+router.get("/common-points", adminController.getAllCommonPoints);
+// Existing Create/Update/Delete Common Points are already there
+
+// Addresses
+router.get("/addresses", adminController.getAllAddresses);
+router.put("/addresses/:id", adminController.updateAddress);
+router.delete("/addresses/:id", adminController.deleteAddress);
+
+// Payment Configuration
+router.post("/payment-details", adminController.createPaymentDetails);
+router.get("/payment-details", adminController.getPaymentDetailsAdmin);
+
+// Payment Verification
+router.get("/payments", adminController.getAllPaymentProofs);
+router.post("/payments/:id/verify", adminController.verifyPaymentProof);
+router.post("/payments/:id/reject", adminController.rejectPaymentProof);
+
 module.exports = router;

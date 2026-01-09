@@ -17,10 +17,21 @@ const verifyAdmin = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.id || decoded.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        error: {
+          message: "Invalid token payload",
+          code: "INVALID_TOKEN_PAYLOAD",
+          status: 401,
+        },
+      });
+    }
 
     // Check if user exists and is admin
     const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
+      where: { id: userId },
     });
 
     if (!user || user.role !== "ADMIN") {
