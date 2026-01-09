@@ -10,110 +10,45 @@ exports.getDeliverySlots = async (req, res) => {
     // Lunch: Afternoon delivery (or morning if Combo)
     // Dinner: Evening delivery
 
-    const slots = {
-      TIFFIN: [
-        {
-          id: "TF_05_06",
-          startTime: "05:00",
-          endTime: "06:00",
-          label: "5 AM - 6 AM",
-        },
-        {
-          id: "TF_06_07",
-          startTime: "06:00",
-          endTime: "07:00",
-          label: "6 AM - 7 AM",
-        },
-        {
-          id: "TF_07_08",
-          startTime: "07:00",
-          endTime: "08:00",
-          label: "7 AM - 8 AM",
-        },
-        {
-          id: "TF_08_09",
-          startTime: "08:00",
-          endTime: "09:00",
-          label: "8 AM - 9 AM",
-        },
-        {
-          id: "TF_09_10",
-          startTime: "09:00",
-          endTime: "10:00",
-          label: "9 AM - 10 AM",
-        },
-      ],
-      LUNCH: [
-        // Early lunch slots for office goers or Tiffin+Lunch combos
-        {
-          id: "LN_07_08",
-          startTime: "07:00",
-          endTime: "08:00",
-          label: "7 AM - 8 AM",
-          isEarly: true,
-        },
-        {
-          id: "LN_08_09",
-          startTime: "08:00",
-          endTime: "09:00",
-          label: "8 AM - 9 AM",
-          isEarly: true,
-        },
-        {
-          id: "LN_11_12",
-          startTime: "11:00",
-          endTime: "12:00",
-          label: "11 AM - 12 PM",
-        },
-        {
-          id: "LN_12_01",
-          startTime: "12:00",
-          endTime: "13:00",
-          label: "12 PM - 1 PM",
-        },
-        {
-          id: "LN_01_02",
-          startTime: "13:00",
-          endTime: "14:00",
-          label: "1 PM - 2 PM",
-        },
-        {
-          id: "LN_02_03",
-          startTime: "14:00",
-          endTime: "15:00",
-          label: "2 PM - 3 PM",
-        },
-      ],
-      DINNER: [
-        {
-          id: "DN_06_07",
-          startTime: "18:00",
-          endTime: "19:00",
-          label: "6 PM - 7 PM",
-        },
-        {
-          id: "DN_07_08",
-          startTime: "19:00",
-          endTime: "20:00",
-          label: "7 PM - 8 PM",
-        },
-        {
-          id: "DN_08_09",
-          startTime: "20:00",
-          endTime: "21:00",
-          label: "8 PM - 9 PM",
-        },
-        {
-          id: "DN_09_10",
-          startTime: "21:00",
-          endTime: "22:00",
-          label: "9 PM - 10 PM",
-        },
-      ],
+    // Fetch from DB
+    const slots = await prisma.deliveryTimeSlot.findMany({
+      where: { isActive: true },
+      orderBy: { startTime: "asc" },
+    });
+
+    // Group by Meal Type Logic (Optional: if we had a mealType field in slot, but currently we just return all or group by time)
+    // The current schema just has name/startTime/endTime.
+    // We can infer type from name or time.
+    // For now, let's return them categorized if names imply it, or just list them.
+    // The previous hardcoded version returned { TIFFIN: [], LCUNH: [] }.
+    // Let's try to maintain that structure by parsing names or times if possible.
+    // If names are 'Lunch 12-1', etc.
+    
+    // Grouping helper
+    const grouped = {
+      TIFFIN: [],
+      LUNCH: [],
+      DINNER: [],
+      SNACKS: []
     };
 
+    slots.forEach(slot => {
+        const name = slot.name.toUpperCase();
+        // Simple keyword matching
+        if (name.includes("MORNING") || name.includes("TIFFIN") || (slot.startTime >= new Date("1970-01-01T05:00:00Z") && slot.startTime < new Date("1970-01-01T10:00:00Z"))) {
+             grouped.TIFFIN.push(slot);
+        }
+        if (name.includes("LUNCH") || name.includes("AFTERNOON") || (slot.startTime >= new Date("1970-01-01T11:00:00Z") && slot.startTime < new Date("1970-01-01T15:00:00Z"))) {
+             grouped.LUNCH.push(slot);
+        }
+        if (name.includes("DINNER") || name.includes("EVENING") || (slot.startTime >= new Date("1970-01-01T18:00:00Z") && slot.startTime < new Date("1970-01-01T22:00:00Z"))) {
+             grouped.DINNER.push(slot);
+        }
+        // Fallback or explicit SNACK logic
+    });
+
     res.json({
-      data: { slots },
+      data: { slots: grouped },
       message: "Delivery slots fetched successfully",
     });
   } catch (error) {
@@ -121,6 +56,71 @@ exports.getDeliverySlots = async (req, res) => {
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
+
+// Update Delivery Preferences (Time Slots)
+exports.updateDeliveryPreferences = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { preferences } = req.body; // { "LUNCH": "slot_uuid", "DINNER": "slot_uuid" }
+
+    if (!preferences || typeof preferences !== "object") {
+       return res.status(400).json({ error: { message: "Invalid preferences format" } });
+    }
+
+    // Get Active Scheme (or pending)
+    const subscription = await prisma.subscription.findFirst({
+        where: { 
+            userId, 
+            status: { in: ["active", "pending_payment", "payment_review"] } 
+        }
+    });
+
+    if (!subscription) {
+        return res.status(404).json({ error: { message: "No active or pending subscription found" } });
+    }
+
+    // Update Future Meals
+    // We update SubscriptionMeals where mealType matches.
+    // AND serviceDate >= today
+    
+    const today = new Date();
+    today.setHours(0,0,0,0);
+
+    const updates = [];
+
+    for (const [mealTypeKey, slotId] of Object.entries(preferences)) {
+        // Validation: Verify key is valid meal type (LUNCH, DINNER, TIFFIN etc?)
+        // In DB mealType is likely stored as "LUNCH", "DINNER" etc. or lowercase.
+        // Assuming user sends "LUNCH" and DB stores uppercase or user sends correct case.
+        // Let's normalize to what DB expects (checking schema or values).
+        // Schema says db.VarChar(20). Values typically 'TIFFIN', 'LUNCH', 'DINNER'.
+        
+        const mealType = mealTypeKey.toUpperCase(); // Normalize
+
+        // Update Many
+        const updateOp = prisma.subscriptionMeal.updateMany({
+            where: {
+                subscriptionId: subscription.id,
+                mealType: mealType, // Assuming accurate match
+                serviceDate: { gte: today }
+            },
+            data: {
+                deliverySlotId: slotId
+            }
+        });
+        updates.push(updateOp);
+    }
+
+    await prisma.$transaction(updates);
+
+    res.json({ message: "Delivery preferences saved successfully" });
+
+  } catch (error) {
+    console.error("Update Preferences Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
 
 // Placeholder for future logic
 exports.allocateDelivery = async (req, res) => {

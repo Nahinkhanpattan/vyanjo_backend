@@ -102,7 +102,10 @@ exports.getActiveSubscription = async (req, res) => {
   try {
     const userId = req.user.id;
     const subscription = await prisma.subscription.findFirst({
-      where: { userId, status: "active" },
+      where: {
+        userId,
+        status: { in: ["active", "pending_payment", "payment_review"] },
+      },
       include: {
         mealPackage: true,
         address: true,
