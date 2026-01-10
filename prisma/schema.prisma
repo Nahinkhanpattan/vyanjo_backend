@@ -65,7 +65,9 @@ model Address {
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   commonPoint   CommonPoint?   @relation(fields: [commonPointId], references: [id])
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subscriptions Subscription[]
+  subscriptions           Subscription[]
+  subscriptionMeals       SubscriptionMeal[]
+  subscriptionPreferences SubscriptionPreference[]
 
   @@map("addresses")
 }
@@ -123,8 +125,26 @@ model Subscription {
   pricing       PackagePricing?       @relation(fields: [pricingId], references: [id])
   user          User                  @relation(fields: [userId], references: [id])
   paymentProof  PaymentProof?
+  preferences   SubscriptionPreference[]
 
   @@map("subscriptions")
+}
+
+model SubscriptionPreference {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId  String            @map("subscription_id") @db.Uuid
+  mealType        String            @map("meal_type") @db.VarChar(20)
+  deliverySlotId  String?           @map("delivery_slot_id") @db.Uuid
+  addressId       String?           @map("address_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  subscription    Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  deliverySlot    DeliveryTimeSlot? @relation(fields: [deliverySlotId], references: [id])
+  address         Address?          @relation(fields: [addressId], references: [id])
+
+  @@unique([subscriptionId, mealType])
+  @@map("subscription_preferences")
 }
 
 model Category {
@@ -190,7 +210,8 @@ model DeliveryTimeSlot {
   endTime           DateTime           @map("end_time") @db.Time(6)
   isActive          Boolean            @default(true) @map("is_active")
   curryOrders       CurryOrder[]
-  subscriptionMeals SubscriptionMeal[]
+  subscriptionMeals       SubscriptionMeal[]
+  subscriptionPreferences SubscriptionPreference[]
 
   @@map("delivery_time_slots")
 }
@@ -216,6 +237,8 @@ model SubscriptionMeal {
   isPaused        Boolean           @default(false) @map("is_paused")
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   mealType        String            @map("meal_type") @db.VarChar(20)
+  addressId       String?           @map("address_id") @db.Uuid
+  address         Address?          @relation(fields: [addressId], references: [id])
   deliveryGroup   DeliveryGroup?    @relation(fields: [deliveryGroupId], references: [id])
   deliverySlot    DeliveryTimeSlot? @relation(fields: [deliverySlotId], references: [id])
   subscription    Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)

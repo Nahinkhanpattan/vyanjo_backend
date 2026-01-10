@@ -4,6 +4,11 @@ const deliveryController = require("../controllers/deliveryController");
 const authenticate = require("../middleware/auth");
 
 router.get("/slots", deliveryController.getDeliverySlots);
+router.get(
+  "/preferences",
+  authenticate,
+  deliveryController.getUserDeliveryPreferences
+);
 router.post(
   "/preferences",
   authenticate,
