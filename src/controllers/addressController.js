@@ -1,4 +1,5 @@
 const prisma = require("../prisma");
+const { validatePincodeInternal } = require("./serviceabilityController");
 
 exports.getAddresses = async (req, res) => {
   try {
@@ -43,6 +44,20 @@ exports.createAddress = async (req, res) => {
         where: { userId, isPrimary: true },
         data: { isPrimary: false },
       });
+    }
+
+    // Validate Pincode Serviceability
+    if (data.pincode) {
+      const validation = await validatePincodeInternal(data.pincode);
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: {
+            message: validation.message,
+            code: "SERVICE_NOT_AVAILABLE",
+            status: 400,
+          },
+        });
+      }
     }
 
     const address = await prisma.address.create({
@@ -97,6 +112,20 @@ exports.updateAddress = async (req, res) => {
         where: { userId, isPrimary: true },
         data: { isPrimary: false },
       });
+    }
+
+    // Validate Pincode Serviceability if changing
+    if (data.pincode) {
+      const validation = await validatePincodeInternal(data.pincode);
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: {
+            message: validation.message,
+            code: "SERVICE_NOT_AVAILABLE",
+            status: 400,
+          },
+        });
+      }
     }
 
     const updatedAddress = await prisma.address.update({
