@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../prisma");
 const { upload } = require("../utils/cloudinary");
 
 // Get Payment Config (User side - public or auth)

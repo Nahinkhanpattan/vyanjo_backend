@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../prisma");
 const moment = require("moment-timezone");
 
 exports.getCurrentMenu = async (req, res) => {

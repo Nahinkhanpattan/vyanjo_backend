@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require("../prisma");
 
 exports.getAddresses = async (req, res) => {
   try {
@@ -7,10 +6,7 @@ exports.getAddresses = async (req, res) => {
     const addresses = await prisma.address.findMany({
       where: { userId },
       include: { commonPoint: true },
-      orderBy: [
-        { isPrimary: 'desc' },
-        { createdAt: 'desc' },
-      ],
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "desc" }],
     });
 
     res.json({
@@ -19,11 +15,11 @@ exports.getAddresses = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Get Addresses Error:', error);
+    console.error("Get Addresses Error:", error);
     res.status(500).json({
       error: {
-        message: 'Internal server error',
-        code: 'SERVER_ERROR',
+        message: "Internal server error",
+        code: "SERVER_ERROR",
         status: 500,
       },
     });
@@ -60,14 +56,14 @@ exports.createAddress = async (req, res) => {
       data: {
         address,
       },
-      message: 'Address created successfully',
+      message: "Address created successfully",
     });
   } catch (error) {
-    console.error('Create Address Error:', error);
+    console.error("Create Address Error:", error);
     res.status(500).json({
       error: {
-        message: 'Internal server error',
-        code: 'SERVER_ERROR',
+        message: "Internal server error",
+        code: "SERVER_ERROR",
         status: 500,
       },
     });
@@ -88,8 +84,8 @@ exports.updateAddress = async (req, res) => {
     if (!existingAddress || existingAddress.userId !== userId) {
       return res.status(404).json({
         error: {
-          message: 'Address not found or unauthorized',
-          code: 'NOT_FOUND',
+          message: "Address not found or unauthorized",
+          code: "NOT_FOUND",
           status: 404,
         },
       });
@@ -112,14 +108,14 @@ exports.updateAddress = async (req, res) => {
       data: {
         address: updatedAddress,
       },
-      message: 'Address updated successfully',
+      message: "Address updated successfully",
     });
   } catch (error) {
-    console.error('Update Address Error:', error);
+    console.error("Update Address Error:", error);
     res.status(500).json({
       error: {
-        message: 'Internal server error',
-        code: 'SERVER_ERROR',
+        message: "Internal server error",
+        code: "SERVER_ERROR",
         status: 500,
       },
     });
