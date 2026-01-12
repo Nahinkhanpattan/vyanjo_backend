@@ -17,7 +17,48 @@ exports.createSubscription = async (req, res) => {
       });
     }
 
-    // ... (existing code)
+    // Check for active subscription
+    const activeSub = await prisma.subscription.findFirst({
+      where: { userId, status: "active" },
+    });
+
+    if (activeSub) {
+      return res.status(422).json({
+        error: {
+          message: "You already have an active subscription",
+          code: "ACTIVE_SUBSCRIPTION_EXISTS",
+          status: 422,
+        },
+      });
+    }
+
+    // Get Pricing and Package
+    const pricing = await prisma.packagePricing.findUnique({
+      where: { id: pricing_id },
+      include: { mealPackage: true },
+    });
+
+    if (!pricing) {
+      return res.status(404).json({
+        error: {
+          message: "Pricing plan not found",
+          code: "PRICING_NOT_FOUND",
+          status: 404,
+        },
+      });
+    }
+
+    const mealPackage = pricing.mealPackage;
+    if (!mealPackage.isActive) {
+      return res
+        .status(400)
+        .json({ error: { message: "This meal package is no longer active" } });
+    }
+
+    // Calculate end date (NOON STRATEGY)
+    const start = moment(start_date).tz("Asia/Kolkata").hour(12);
+    const duration = pricing.durationDays;
+    const end = start.clone().add(duration - 1, "days");
 
     // Validate if address_id is a real UUID, otherwise set to null
     const isValidUUID = (id) =>
@@ -26,8 +67,6 @@ exports.createSubscription = async (req, res) => {
       );
     const finalAddressId =
       address_id && isValidUUID(address_id) ? address_id : null;
-
-    // ...
 
     // Create Subscription
     const subscription = await prisma.subscription.create({
