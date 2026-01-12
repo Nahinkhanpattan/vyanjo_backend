@@ -1,30 +1,130 @@
 const prisma = require("../prisma");
 const moment = require("moment-timezone");
 
-exports.getCurrentMenu = async (req, res) => {
+exports.getNextWeeklyMenu = async (req, res) => {
   try {
-    const { diet, cuisine, tier } = req.query; // Added tier support
+    let { diet, cuisine, tier } = req.query;
+
+    // Resolve preferences from subscription if missing
+    if ((!diet || !cuisine) && req.user && req.user.id) {
+      const subPrefs = await getSubscriptionPreferences(req.user.id);
+      if (subPrefs) {
+        if (!diet) diet = subPrefs.diet;
+        if (!cuisine) cuisine = subPrefs.cuisine;
+        if (!tier) tier = subPrefs.tier;
+      }
+    }
 
     if (!diet || !cuisine) {
       return res.status(400).json({
         error: {
-          message: "Diet and Cuisine types are required",
+          message:
+            "Diet and Cuisine types are required or no active subscription found",
           code: "MISSING_PARAMS",
           status: 400,
         },
       });
     }
 
-    const today = moment().tz("Asia/Kolkata");
-    const weekStart = today.clone().startOf("isoWeek");
+    // Calculate start of NEXT week (Current + 7 days, normalized to Monday Noon)
+    const weekStart = moment()
+      .tz("Asia/Kolkata")
+      .add(1, "weeks")
+      .startOf("isoWeek")
+      .hour(12);
 
-    // Using findFirst instead of findUnique to avoid strict compound key requirement issues
-    // and to support optional defaults like Tier
+    console.log(
+      `[MenuController] Fetching Next Week for: ${weekStart.format(
+        "YYYY-MM-DD"
+      )} (Computed WeekStart)`
+    );
+
     const menu = await prisma.weeklyMenu.findFirst({
       where: {
         dietType: diet,
         cuisineType: cuisine,
-        tier: tier || "REGULAR", // Default to Regular if not specified
+        tier: tier || "REGULAR",
+        weekStartDate: weekStart.toDate(),
+      },
+      include: {
+        items: {
+          include: { menuItem: { include: { category: true } } },
+        },
+      },
+      orderBy: {
+        weekStartDate: "desc",
+      },
+    });
+
+    if (!menu) {
+      return res.status(404).json({
+        error: {
+          message: `No menu found for ${diet} ${cuisine} (${
+            tier || "REGULAR"
+          }) for week starting ${weekStart.format("YYYY-MM-DD")}`,
+          code: "MENU_NOT_FOUND",
+          status: 404,
+        },
+      });
+    }
+
+    res.json({
+      data: {
+        menu,
+      },
+    });
+  } catch (error) {
+    console.error("Get Next Weekly Menu Error:", error);
+    res.status(500).json({
+      error: {
+        message: "Internal server error",
+        code: "SERVER_ERROR",
+        status: 500,
+      },
+    });
+  }
+};
+
+exports.getCurrentMenu = async (req, res) => {
+  try {
+    let { diet, cuisine, tier, date } = req.query;
+
+    // If param "date" is "today", use current date
+    let targetDate = moment().tz("Asia/Kolkata");
+    if (date && date.toLowerCase() === "today") {
+      // already set to today
+    } else if (date) {
+      targetDate = moment(date).tz("Asia/Kolkata");
+    }
+
+    // Attempt to resolve preferences from subscription if missing
+    if ((!diet || !cuisine) && req.user && req.user.id) {
+      const subPrefs = await getSubscriptionPreferences(req.user.id);
+      if (subPrefs) {
+        if (!diet) diet = subPrefs.diet;
+        if (!cuisine) cuisine = subPrefs.cuisine;
+        if (!tier) tier = subPrefs.tier;
+      }
+    }
+
+    if (!diet || !cuisine) {
+      return res.status(400).json({
+        error: {
+          message:
+            "Diet and Cuisine types are required or no active subscription found",
+          code: "MISSING_PARAMS",
+          status: 400,
+        },
+      });
+    }
+
+    const weekStart = targetDate.clone().startOf("isoWeek").hour(12);
+
+    const menu = await prisma.weeklyMenu.findFirst({
+      where: {
+        dietType: diet,
+        cuisineType: cuisine,
+        tier: tier || "REGULAR",
         weekStartDate: weekStart.toDate(),
       },
       include: {
@@ -46,9 +146,31 @@ exports.getCurrentMenu = async (req, res) => {
       });
     }
 
+    // Filter for specific day if requested (implicitly 'current' usually implies today/now context,
+    // but user said "if i ask ... with date todays")
+    // If param 'date' is specifically provided, we filter.
+    // If accessing /current without date, we might want to just show today's?
+    // User said: "if i ask for current menu with date todays then i want the menu of today's only".
+    // This implies if they provided the date param.
+
+    let responseMenu = menu;
+
+    if (date) {
+      const dayOfWeek = targetDate.isoWeekday(); // 1=Mon, 7=Sun
+      const filteredItems = menu.items.filter(
+        (item) => item.dayOfWeek === dayOfWeek
+      );
+
+      // We can construct a partial menu object or just return items. Use partial menu object for consistency.
+      responseMenu = {
+        ...menu,
+        items: filteredItems,
+      };
+    }
+
     res.json({
       data: {
-        menu,
+        menu: responseMenu,
       },
     });
   } catch (error) {
@@ -65,43 +187,33 @@ exports.getCurrentMenu = async (req, res) => {
 
 exports.getWeeklyMenu = async (req, res) => {
   try {
-    const { date, diet, cuisine, tier } = req.query;
+    let { date, diet, cuisine, tier } = req.query;
 
-    if (!date || !diet || !cuisine) {
+    // Resolve preferences from subscription if missing
+    if ((!diet || !cuisine) && req.user && req.user.id) {
+      const subPrefs = await getSubscriptionPreferences(req.user.id);
+      if (subPrefs) {
+        if (!diet) diet = subPrefs.diet;
+        if (!cuisine) cuisine = subPrefs.cuisine;
+        if (!tier) tier = subPrefs.tier;
+      }
+    }
+
+    if (!diet || !cuisine) {
       return res.status(400).json({
         error: {
-          message: "Date, Diet and Cuisine types are required",
+          message:
+            "Diet and Cuisine types are required or no active subscription found",
           code: "MISSING_PARAMS",
           status: 400,
         },
       });
     }
 
-    const inputDate = moment(date).tz("Asia/Kolkata");
-    // If a specific date is provided, used it as start date if it's a Monday,
-    // OR calculate start of week.
-    // The user creates menu with '2025-01-05' (Sunday).
-    // 'startOf('isoWeek')' on Sunday 2025-01-05 gives Monday 2024-12-30.
-    // BUT maybe they intended 2025-01-05 to be start?
-    // Standard is Monday. Let's stick to startOf('isoWeek') for consistency,
-    // BUT we must print what we are searching for.
-
-    // Fix: Creation used 'new Date(weekStartDate)' directly.
-    // If frontend sends Sunday, DB has Sunday.
-    // Fetching uses 'startOf(isoWeek)' which changes it to Monday.
-    // We should probably NOT change the date if the user asking for a specific date?
-    // Let's rely on exact match if they send a date that looks like a start date.
-
-    const weekStart = inputDate.clone().startOf("isoWeek");
-    // Wait, if I created it as Sunday, fetch as Monday fails.
-    // Solution: Admin Creation should ALSO normalize to start of week?
-    // OR: Fetch should look for exact date first?
-    // Better: Normalize creation to Monday. That is the standard.
-    // However, I can't change the data already in DB easily.
-    // Let's check for BOTH or just trust the input?
-
-    // For now, let's look for the calculated weekStart OR the raw input date?
-    // findFirst allows only one where.
+    const inputDate = date
+      ? moment(date).tz("Asia/Kolkata")
+      : moment().tz("Asia/Kolkata");
+    const weekStart = inputDate.clone().startOf("isoWeek").hour(12);
 
     console.log(
       `[MenuController] Fetching for: ${weekStart.format(
@@ -114,13 +226,15 @@ exports.getWeeklyMenu = async (req, res) => {
         dietType: diet,
         cuisineType: cuisine,
         tier: tier || "REGULAR",
-        // Logic: Try to find by normalized week start
         weekStartDate: weekStart.toDate(),
       },
       include: {
         items: {
           include: { menuItem: { include: { category: true } } },
         },
+      },
+      orderBy: {
+        weekStartDate: "desc", // In case of duplicates (shouldn't happen), take latest? Unique constraint prevents this actually.
       },
     });
 
@@ -152,6 +266,29 @@ exports.getWeeklyMenu = async (req, res) => {
     });
   }
 };
+
+// Helper function to get user subscription preferences
+async function getSubscriptionPreferences(userId) {
+  const subscription = await prisma.subscription.findFirst({
+    where: {
+      userId,
+      status: { in: ["active", "pending_payment", "payment_review"] },
+    },
+    include: {
+      mealPackage: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (subscription && subscription.mealPackage) {
+    return {
+      diet: subscription.mealPackage.dietType,
+      cuisine: subscription.mealPackage.cuisineType,
+      tier: subscription.mealPackage.tier,
+    };
+  }
+  return null;
+}
 
 exports.getAllMenus = async (req, res) => {
   try {

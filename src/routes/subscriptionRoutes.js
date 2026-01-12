@@ -21,6 +21,8 @@ router.post(
 );
 router.post("/:id/upgrade", subscriptionController.createUpgrade);
 router.post("/:id/pause", subscriptionController.pauseSubscription);
+router.post("/:id/resume", subscriptionController.resumeSubscription);
+router.get("/:id/pauses", subscriptionController.getSubscriptionPauses);
 router.get("/active", subscriptionController.getActiveSubscription);
 
 module.exports = router;

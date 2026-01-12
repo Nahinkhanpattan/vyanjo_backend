@@ -9,6 +9,7 @@ router.use(verifyToken);
 
 router.get("/current", menuController.getCurrentMenu);
 router.get("/week", menuController.getWeeklyMenu);
+router.get("/next-week", menuController.getNextWeeklyMenu);
 
 // Admin Routes
 router.get("/", verifyAdmin, menuController.getAllMenus);

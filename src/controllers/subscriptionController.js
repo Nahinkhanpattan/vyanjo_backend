@@ -57,7 +57,7 @@ exports.createSubscription = async (req, res) => {
     }
 
     // Calculate end date
-    const start = moment(start_date).tz("Asia/Kolkata");
+    const start = moment(start_date).tz("Asia/Kolkata").hour(12);
     const duration = pricing.durationDays;
     const end = start.clone().add(duration - 1, "days");
 
@@ -313,12 +313,14 @@ exports.pauseSubscription = async (req, res) => {
   try {
     const userId = req.user.id;
     const { id } = req.params;
-    const { dates } = req.body; // Array of date strings 'YYYY-MM-DD'
+    // Support both old 'dates' array and new 'pauses' array complexity
+    // pauses: [ { date: 'YYYY-MM-DD', mealTypes: ['LUNCH', 'DINNER'] || 'ALL' } ]
+    const { dates, pauses } = req.body;
 
-    if (!dates || !Array.isArray(dates) || dates.length === 0) {
+    if ((!dates || dates.length === 0) && (!pauses || pauses.length === 0)) {
       return res
         .status(400)
-        .json({ error: { message: "Dates array is required" } });
+        .json({ error: { message: "Dates or pauses array is required" } });
     }
 
     const subscription = await prisma.subscription.findUnique({
@@ -332,61 +334,424 @@ exports.pauseSubscription = async (req, res) => {
         .json({ error: { message: "Subscription not found" } });
     }
 
-    // Validation: Strict "Tomorrow or later" rule
-    // "meal pause can be done only a day prior not today"
-    const today = moment().tz("Asia/Kolkata").startOf("day");
+    const now = moment().tz("Asia/Kolkata");
+    const today = now.clone().startOf("day");
     const tomorrow = today.clone().add(1, "days");
 
-    const mealsToUpdate = [];
+    // normalize input into a standard list of pause requests
+    // Structure: { date: Moment, mealTypes: ['LUNCH'] or ['ALL'] }
+    let pauseRequests = [];
 
-    for (const dateStr of dates) {
-      const targetDate = moment(dateStr).tz("Asia/Kolkata").startOf("day");
+    if (pauses && Array.isArray(pauses)) {
+      for (const p of pauses) {
+        pauseRequests.push({
+          date: moment(p.date).tz("Asia/Kolkata").startOf("day"),
+          mealTypes: p.mealTypes || ["ALL"],
+        });
+      }
+    } else if (dates && Array.isArray(dates)) {
+      // Legacy support: treats dates as 'ALL' meals for that day
+      for (const d of dates) {
+        pauseRequests.push({
+          date: moment(d).tz("Asia/Kolkata").startOf("day"),
+          mealTypes: ["ALL"],
+        });
+      }
+    }
 
-      if (targetDate.isBefore(tomorrow)) {
+    // Validation & Collection of IDs to Pause
+    const mealsToPauseIds = [];
+    const mealsToExtend = []; // { mealType: 'LUNCH' }
+    const pauseRecords = []; // For MealPause table
+
+    for (const req of pauseRequests) {
+      // 1. Validate Date: Must be tomorrow or later
+      if (req.date.isBefore(tomorrow)) {
+        // If it's today, we can't pause (assuming processed/cooked)
+        // Prompt says "pause the next day meal"
         return res.status(400).json({
-          error: { message: "Pauses allowed only for tomorrow or later" },
+          error: {
+            message: `Cannot pause meals for today or past dates (${req.date.format(
+              "YYYY-MM-DD"
+            )})`,
+          },
         });
       }
 
-      // Find meals on this date for this subscription
-      // "it can be paused for 1 meal , 2 meal or full day meal"
-      // Getting detailed: Prompt says "paused for 1 meal...".
-      // If `dates` is passed, assume FULL DAY pause unless `mealTypes` specified.
-      // Let's assume full day for now based on "dates" input.
+      // 2. Validate 8 PM Rule for Tomorrow
+      if (req.date.isSame(tomorrow, "day")) {
+        if (now.hour() >= 20) {
+          return res.status(400).json({
+            error: {
+              message: "Cannot pause tomorrow's meal after 8:00 PM today",
+            },
+          });
+        }
+      }
 
-      const meals = await prisma.subscriptionMeal.findMany({
-        where: {
-          subscriptionId: id,
-          serviceDate: {
-            gte: targetDate.toDate(),
-            lt: targetDate.clone().add(1, "days").toDate(),
-          },
+      // 3. Find meals to pause
+      // Robust Date Query Strategy: Broad Fetch + In-Memory Filter
+      // We widen the search window to handle Timezone shifts and DB Date truncation.
+
+      const searchStart = req.date.clone().subtract(1, "days").toDate();
+      const searchEnd = req.date.clone().add(2, "days").toDate();
+
+      const whereClause = {
+        subscriptionId: id,
+        serviceDate: {
+          gte: searchStart,
+          lt: searchEnd,
         },
+        isPaused: false, // Only pause active meals
+      };
+
+      if (!req.mealTypes.includes("ALL")) {
+        whereClause.mealType = { in: req.mealTypes };
+      }
+
+      const potentialMeals = await prisma.subscriptionMeal.findMany({
+        where: whereClause,
       });
 
-      // Mark them as skipped/paused
-      for (const meal of meals) {
-        mealsToUpdate.push(meal.id);
+      // Strict In-Memory Filter to match exact IST Date
+      const foundMeals = potentialMeals.filter((meal) =>
+        moment(meal.serviceDate).tz("Asia/Kolkata").isSame(req.date, "day")
+      );
+
+      for (const meal of foundMeals) {
+        mealsToPauseIds.push(meal.id);
+        mealsToExtend.push({ mealType: meal.mealType });
+        // Create Audit Record Data
+        pauseRecords.push({
+          subscriptionId: id,
+          mealDate: meal.serviceDate,
+          mealType: meal.mealType,
+          pausedAt: new Date(),
+        });
       }
     }
 
-    if (mealsToUpdate.length > 0) {
-      await prisma.subscriptionMeal.updateMany({
-        where: { id: { in: mealsToUpdate } },
-        data: { status: "paused" }, // Assuming 'status' field exists in SubscriptionMeal or we use boolean
+    if (mealsToPauseIds.length === 0) {
+      return res.json({
+        message: "No active meals found to pause for the specified dates.",
       });
-      // Schema check: SubscriptionMeal status?
-      // Need to verify check schema. If not, maybe use `isSkipped`.
-      // Let's assume schema has `status` or `isSkipped`.
-      // Checking Schema...
     }
 
+    // --- TRANSACTION START ---
+    await prisma.$transaction(async (tx) => {
+      // 1. Update existing meals to isPaused = true
+      await tx.subscriptionMeal.updateMany({
+        where: { id: { in: mealsToPauseIds } },
+        data: { isPaused: true },
+      });
+
+      // 2. Extend Subscription logic
+      // Find the absolute last meal date to ensure we don't collide.
+      // Do NOT rely solely on subscription.endDate as it might be stale.
+      const lastMeal = await tx.subscriptionMeal.aggregate({
+        where: { subscriptionId: id },
+        _max: { serviceDate: true },
+      });
+
+      // If messages exist, start from max date. Else start from subscription.endDate (fallback).
+      let lastServiceDate = lastMeal._max.serviceDate
+        ? moment(lastMeal._max.serviceDate).tz("Asia/Kolkata").startOf("day")
+        : moment(subscription.endDate).tz("Asia/Kolkata").startOf("day");
+
+      let currentEndDate = lastServiceDate;
+      let newEndDate = currentEndDate.clone();
+
+      // We have `mealsToExtend` list e.g. ['LUNCH', 'DINNER', 'LUNCH']
+      // We need to place them on days AFTER currentEndDate.
+      // Simple algorithm:
+      //  - Move to next day.
+      //  - Check if that day can host these meals (e.g. check duplicate? or just assume valid)
+      //  - If package has "LUNCH, DINNER" daily, we can fit 1 Lunch and 1 Dinner per day.
+      //  - We need to fill "slots".
+
+      // Let's Group meals by Type
+      const extensionCounts = {}; // { LUNCH: 2, DINNER: 1 }
+      for (const m of mealsToExtend) {
+        extensionCounts[m.mealType] = (extensionCounts[m.mealType] || 0) + 1;
+      }
+
+      // We iterate days starting from currentEndDate + 1
+      // Until all counts are 0.
+      let dayOffset = 1;
+      const newMealsData = [];
+
+      while (Object.values(extensionCounts).some((c) => c > 0)) {
+        const nextDate = currentEndDate.clone().add(dayOffset, "days");
+
+        // Determine what meals allowed on this day (usually match package?)
+        // Assuming Package allows the meals we are pausing (obviously).
+        // We assume we can place 'LUNCH' on this day if we haven't already filled it?
+        // But wait, if we extend, we are adding NEW days.
+        // On a NEW day, we can fit whatever the package allows.
+        // IF the package allows [LUNCH, DINNER], we can place 1 LUNCH and 1 DINNER.
+
+        // But here we are just shifting individual meals.
+        // Simplest approach: Just dump them on the next available day?
+        // If we have 2 Lunches pending, we can't put 2 lunches on same day (usually).
+        // So we take 1 Unit of each available type per day.
+
+        const mealsForThisDay = [];
+
+        // Check what we can place
+        for (const type of Object.keys(extensionCounts)) {
+          if (extensionCounts[type] > 0) {
+            // Place 1 instance
+            mealsForThisDay.push({
+              subscriptionId: id,
+              // Use Noon to avoid UTC previous-day rollback (Collision fix)
+              serviceDate: nextDate.clone().hour(12).toDate(),
+              mealType: type,
+              isPaused: false,
+            });
+            extensionCounts[type]--;
+          }
+        }
+
+        if (mealsForThisDay.length > 0) {
+          newMealsData.push(...mealsForThisDay);
+          newEndDate = nextDate; // Track furthest date
+          dayOffset++; // Only move to next day if we used this one?
+          // Actually yes, if we placed meals, that "day" is partially used.
+          // If we have more meals, we go to next day.
+          // This spreads meals out. 3 Lunches -> 3 Days. Correct.
+        } else {
+          // Should not happen if loop condition met
+          dayOffset++;
+        }
+      }
+
+      if (newMealsData.length > 0) {
+        await tx.subscriptionMeal.createMany({ data: newMealsData });
+
+        // Update Subscription End Date
+        await tx.subscription.update({
+          where: { id },
+          data: { endDate: newEndDate.toDate() },
+        });
+      }
+
+      // 3. Create Audit Trail (MealPause)
+      if (pauseRecords.length > 0) {
+        // Enforce action: PAUSE (Default is PAUSE but being explicit is good)
+        const recordsWithAction = pauseRecords.map((p) => ({
+          ...p,
+          action: "PAUSE",
+        }));
+        await tx.mealPause.createMany({ data: recordsWithAction });
+      }
+    });
+    // --- TRANSACTION END ---
+
     res.json({
-      message: "Meals paused successfully",
-      count: mealsToUpdate.length,
+      message: `Successfully paused ${mealsToPauseIds.length} meals and extended subscription by ${mealsToExtend.length} meals.`,
+      data: {
+        pausedCount: mealsToPauseIds.length,
+        extendedCount: mealsToExtend.length,
+      },
     });
   } catch (error) {
     console.error("Pause Subscription Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.resumeSubscription = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    // resumes: [ { date: 'YYYY-MM-DD', mealTypes: ['LUNCH'] } ]
+    const { resumes } = req.body;
+
+    if (!resumes || !Array.isArray(resumes) || resumes.length === 0) {
+      return res
+        .status(400)
+        .json({ error: { message: "Resumes array is required" } });
+    }
+
+    const subscription = await prisma.subscription.findUnique({
+      where: { id },
+    });
+
+    if (!subscription || subscription.userId !== userId) {
+      return res
+        .status(404)
+        .json({ error: { message: "Subscription not found" } });
+    }
+
+    const now = moment().tz("Asia/Kolkata");
+    const tomorrow = now.clone().startOf("day").add(1, "days");
+
+    const mealsToResumeIds = [];
+    const mealsToRemoveExtension = []; // { mealType: 'LUNCH' }
+    const auditRecords = [];
+
+    for (const r of resumes) {
+      const targetDate = moment(r.date).tz("Asia/Kolkata").startOf("day");
+      const types = r.mealTypes || ["ALL"];
+
+      // 1. Validate Date: Cannot resume past meals
+      // Strictly speaking, we only care about 8PM rule for Tomorrow.
+      // It makes no sense to "resume" a past meal that was already skipped.
+      // So targetDate >= tomorrow is safe assumption, or at least >= today if logic allows (but today is likely cooked).
+      // Prompt asked for "resume it before 8 pm", implying tomorrow's meal.
+
+      if (targetDate.isBefore(tomorrow)) {
+        return res
+          .status(400)
+          .json({ error: { message: "Cannot resume past or today's meals" } });
+      }
+
+      // 2. Validate 8 PM Rule for Tomorrow
+      if (targetDate.isSame(tomorrow, "day")) {
+        if (now.hour() >= 20) {
+          return res.status(400).json({
+            error: {
+              message: "Cannot resume tomorrow's meal after 8:00 PM today",
+            },
+          });
+        }
+      }
+
+      // 3. Find Paused Meals
+      // Robust Strategy: Broad Fetch + Strict Filter
+      const searchStart = targetDate.clone().subtract(1, "days").toDate();
+      const searchEnd = targetDate.clone().add(2, "days").toDate();
+
+      const whereClause = {
+        subscriptionId: id,
+        serviceDate: {
+          gte: searchStart,
+          lt: searchEnd,
+        },
+        isPaused: true, // We can only resume PAUSED meals
+      };
+      if (!types.includes("ALL")) {
+        whereClause.mealType = { in: types };
+      }
+
+      const potentialMeals = await prisma.subscriptionMeal.findMany({
+        where: whereClause,
+      });
+
+      const foundMeals = potentialMeals.filter((meal) =>
+        moment(meal.serviceDate).tz("Asia/Kolkata").isSame(targetDate, "day")
+      );
+
+      for (const meal of foundMeals) {
+        mealsToResumeIds.push(meal.id);
+        mealsToRemoveExtension.push({ mealType: meal.mealType });
+        auditRecords.push({
+          subscriptionId: id,
+          mealDate: meal.serviceDate,
+          mealType: meal.mealType,
+          action: "RESUME",
+          pausedAt: new Date(),
+        });
+      }
+    }
+
+    if (mealsToResumeIds.length === 0) {
+      return res.json({
+        message: "No paused meals found to resume for specified dates.",
+      });
+    }
+
+    // --- TRANSACTION START ---
+    await prisma.$transaction(async (tx) => {
+      // 1. Set isPaused = false
+      await tx.subscriptionMeal.updateMany({
+        where: { id: { in: mealsToResumeIds } },
+        data: { isPaused: false },
+      });
+
+      // 2. Remove Extension
+      // Logic: For each resumed meal, we must delete ONE future meal of same type from end of subscription.
+      // This implies finding the LATEST serviceDate for that type and deleting it.
+      // We should do this one by one or grouped?
+      // To be safe, let's do one by one or grouped by TYPE.
+
+      for (const item of mealsToRemoveExtension) {
+        // Find latest active meal of this type
+        const latestMeal = await tx.subscriptionMeal.findFirst({
+          where: {
+            subscriptionId: id,
+            mealType: item.mealType,
+            isPaused: false, // Assuming extension meals are active
+          },
+          orderBy: { serviceDate: "desc" },
+        });
+
+        if (latestMeal) {
+          await tx.subscriptionMeal.delete({ where: { id: latestMeal.id } });
+        }
+      }
+
+      // 3. Recalculate End Date
+      const lastMealAggregate = await tx.subscriptionMeal.aggregate({
+        where: { subscriptionId: id },
+        _max: { serviceDate: true },
+      });
+
+      // If no meals left (unlikely but possible), revert.
+      // fallback to original sub end date? No, just update to whatever max is.
+      if (lastMealAggregate._max.serviceDate) {
+        await tx.subscription.update({
+          where: { id },
+          data: { endDate: lastMealAggregate._max.serviceDate },
+        });
+      }
+
+      // 4. Audit Log
+      if (auditRecords.length > 0) {
+        await tx.mealPause.createMany({ data: auditRecords });
+      }
+    });
+
+    res.json({
+      message: `Successfully resumed ${mealsToResumeIds.length} meals.`,
+      data: {
+        resumedCount: mealsToResumeIds.length,
+      },
+    });
+  } catch (error) {
+    console.error("Resume Subscription Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.getSubscriptionPauses = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params; // Subscription ID
+
+    const subscription = await prisma.subscription.findUnique({
+      where: { id },
+    });
+
+    if (!subscription || subscription.userId !== userId) {
+      return res
+        .status(404)
+        .json({ error: { message: "Subscription not found" } });
+    }
+
+    const pauses = await prisma.mealPause.findMany({
+      where: { subscriptionId: id },
+      orderBy: { pausedAt: "desc" },
+    });
+
+    res.json({
+      data: {
+        pauses,
+        count: pauses.length,
+      },
+    });
+  } catch (error) {
+    console.error("Get Pauses Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };

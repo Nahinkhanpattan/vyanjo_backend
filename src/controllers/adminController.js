@@ -620,10 +620,11 @@ exports.createWeeklyMenu = async (req, res) => {
         const { dietType, cuisineType, tier } = variant;
 
         // Normalize start date to Monday to match fetch logic
-        // This prevents the "Created on Sunday, Searching for Monday" mismatch
+        // We set hour to 12 (Noon) to avoid timezone/UTC truncation issues (Monday 00:00 IST -> Sunday 18:30 UTC)
         const normalizedWeekStart = moment(weekStartDate)
           .tz("Asia/Kolkata")
           .startOf("isoWeek")
+          .hour(12)
           .toDate();
 
         // 1. Find or Create the WeeklyMenu container
@@ -1087,7 +1088,7 @@ exports.verifyPaymentProof = async (req, res) => {
         const mealsToCreate = [];
 
         for (let i = 0; i < duration; i++) {
-          const currentDate = start.clone().add(i, "days");
+          const currentDate = start.clone().add(i, "days").hour(12);
           for (const type of itemTypes) {
             mealsToCreate.push({
               subscriptionId: subscription.id,

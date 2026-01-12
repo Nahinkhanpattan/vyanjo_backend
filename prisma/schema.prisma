@@ -252,6 +252,7 @@ model MealPause {
   subscriptionId String       @map("subscription_id") @db.Uuid
   mealDate       DateTime     @map("meal_date") @db.Date
   mealType       String       @map("meal_type") @db.VarChar(20)
+  action         String       @default("PAUSE") @db.VarChar(10)
   pausedAt       DateTime     @default(now()) @map("paused_at") @db.Timestamptz(6)
   subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
