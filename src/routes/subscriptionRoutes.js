@@ -7,7 +7,7 @@ const { body } = require("express-validator");
 
 const validateSubscription = [
   body("pricing_id").isUUID().withMessage("Invalid Pricing ID"),
-  body("address_id").isUUID().withMessage("Invalid Address ID"),
+  body("address_id").optional(), // Allow temp strings or UUID
   body("start_date").isISO8601().toDate().withMessage("Invalid start date"),
   validateRequest,
 ];

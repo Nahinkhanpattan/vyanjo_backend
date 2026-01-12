@@ -109,7 +109,7 @@ model Subscription {
   id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId        String                @map("user_id") @db.Uuid
   mealPackageId String                @map("meal_package_id") @db.Uuid
-  addressId     String                @map("address_id") @db.Uuid
+  addressId     String?               @map("address_id") @db.Uuid
   containerType String                @map("container_type") @db.VarChar(20)
   startDate     DateTime              @map("start_date") @db.Date
   endDate       DateTime              @map("end_date") @db.Date
@@ -120,7 +120,7 @@ model Subscription {
   pauses        MealPause[]
   meals         SubscriptionMeal[]
   upgrades      SubscriptionUpgrade[]
-  address       Address               @relation(fields: [addressId], references: [id])
+  address       Address?              @relation(fields: [addressId], references: [id])
   mealPackage   MealPackage           @relation(fields: [mealPackageId], references: [id])
   pricing       PackagePricing?       @relation(fields: [pricingId], references: [id])
   user          User                  @relation(fields: [userId], references: [id])

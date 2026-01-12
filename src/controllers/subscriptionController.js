@@ -9,57 +9,25 @@ exports.createSubscription = async (req, res) => {
     // Alternatively, we could take package_id + pricing_id.
     const { pricing_id, start_date, address_id, container_type } = req.body;
 
-    if (!pricing_id || !start_date || !address_id) {
+    if (!pricing_id || !start_date) {
       return res.status(400).json({
         error: {
-          message:
-            "Missing required fields: pricing_id, start_date, address_id",
+          message: "Missing required fields: pricing_id, start_date",
         },
       });
     }
 
-    // Check for active subscription
-    const activeSub = await prisma.subscription.findFirst({
-      where: { userId, status: "active" },
-    });
+    // ... (existing code)
 
-    if (activeSub) {
-      return res.status(422).json({
-        error: {
-          message: "You already have an active subscription",
-          code: "ACTIVE_SUBSCRIPTION_EXISTS",
-          status: 422,
-        },
-      });
-    }
+    // Validate if address_id is a real UUID, otherwise set to null
+    const isValidUUID = (id) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id
+      );
+    const finalAddressId =
+      address_id && isValidUUID(address_id) ? address_id : null;
 
-    // Get Pricing and Package
-    const pricing = await prisma.packagePricing.findUnique({
-      where: { id: pricing_id },
-      include: { mealPackage: true },
-    });
-
-    if (!pricing) {
-      return res.status(404).json({
-        error: {
-          message: "Pricing plan not found",
-          code: "PRICING_NOT_FOUND",
-          status: 404,
-        },
-      });
-    }
-
-    const mealPackage = pricing.mealPackage;
-    if (!mealPackage.isActive) {
-      return res
-        .status(400)
-        .json({ error: { message: "This meal package is no longer active" } });
-    }
-
-    // Calculate end date
-    const start = moment(start_date).tz("Asia/Kolkata").hour(12);
-    const duration = pricing.durationDays;
-    const end = start.clone().add(duration - 1, "days");
+    // ...
 
     // Create Subscription
     const subscription = await prisma.subscription.create({
@@ -67,7 +35,7 @@ exports.createSubscription = async (req, res) => {
         userId,
         mealPackageId: mealPackage.id,
         pricingId: pricing.id,
-        addressId: address_id,
+        addressId: finalAddressId, // Use processed ID
         containerType: container_type || mealPackage.defaultContainer,
         startDate: start.toDate(),
         endDate: end.toDate(),
