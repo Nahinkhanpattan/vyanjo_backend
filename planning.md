@@ -736,7 +736,47 @@ model Issue {
 **Errors**:
 
 - 400 if validation fails
+- 400 if validation fails
 - 401 if not authenticated
+
+#### GET /api/auth/profile
+
+**Purpose**: Get current user profile details.
+
+**Authentication**: Required
+
+**Response (200)**:
+
+```json
+{
+  "data": {
+    "user": {
+      "id": "uuid",
+      "phoneNumber": "+919876543210",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "role": "USER",
+      "isActive": true,
+      "createdAt": "...",
+      "updatedAt": "..."
+    }
+  }
+}
+```
+
+#### DELETE /api/auth/profile
+
+**Purpose**: Deactivate (Soft Delete) current user account.
+
+**Authentication**: Required
+
+**Response (200)**:
+
+```json
+{
+  "message": "Profile deactivated successfully"
+}
+```
 
 ---
 
@@ -1858,6 +1898,30 @@ model Issue {
 
 **Base Path**: `/api/subscriptions`
 
+#### GET /api/subscriptions/:id/upgrades
+
+**Purpose**: Get available upgrade options for a subscription.
+
+**Authentication**: Required
+
+**Response (200)**:
+
+```json
+{
+  "data": {
+    "upgrades": [
+      {
+        "id": "uuid",
+        "name": "Upgrade to Premium",
+        "price": 100.0,
+        "fromTier": "REGULAR",
+        "toTier": "PREMIUM"
+      }
+    ]
+  }
+}
+```
+
 #### POST /api/subscriptions/:id/upgrade
 
 **Purpose**: Apply an upgrade (Tier, Diet, Cuisine) or Add Meals to an active subscription.
@@ -2286,7 +2350,77 @@ module.exports = router;
 }
 ```
 
+#### PUT /api/admin/meal-packages/:id
+
+**Purpose**: Update a meal package details.
+
+#### DELETE /api/admin/meal-packages/:id
+
+**Purpose**: Soft delete a meal package (set isActive = false).
+
+#### POST /api/admin/upgrades
+
+**Purpose**: Define a pricing rule for upgrades (e.g. Regular -> Premium).
+
+**Request Body**:
+
+```json
+{
+  "name": "Upgrade: Regular to Premium",
+  "fromTier": "REGULAR",
+  "toTier": "PREMIUM",
+  "fromDiet": "veg",
+  "toDiet": "non_veg", // Optional
+  "scope": "WEEK", // MEAL, DAY, WEEK
+  "price": 300.0
+}
+```
+
+#### PUT /api/admin/upgrades/:id
+
+#### DELETE /api/admin/upgrades/:id
+
 (Other Admin endpoints remain as previously defined...)
+
+#### POST /api/admin/users
+
+**Purpose**: Create a new user (admin or regular).
+
+**Request Body**:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "securepassword", // Will be hashed
+  "name": "New User",
+  "phoneNumber": "...",
+  "role": "USER" // or ADMIN
+}
+```
+
+#### DELETE /api/admin/users/:id
+
+**Purpose**: Deactivate (Soft Delete) a user.
+
+#### GET /api/admin/users
+
+**Purpose**: List all users.
+
+**Response**:
+
+```json
+{
+  "data": {
+    "users": [
+      {
+        "id": "uuid",
+        "email": "...",
+        "isActive": true
+      }
+    ]
+  }
+}
+```
 
 ---
 
@@ -2388,9 +2522,10 @@ module.exports = router;
 
 **Request Body**:
 
-- `screenshot`: File (Image)
-- `subscriptionId`: "uuid" (Optional if curryTokenPackageId provided)
-- `curryTokenPackageId`: "uuid" (Optional if subscriptionId provided)
+- `screenshot`: File (Image) ?? OR `screenshotUrl`: "string" (if cloud uploaded)
+- `subscriptionId`: "uuid" (Optional)
+- `curryTokenPackageId`: "uuid" (Optional)
+- `subscriptionUpgradeId`: "uuid" (Optional - New)
 - `amount`: "1500.00"
 - `transactionId`: "UTR123456789"
 - `payerName`: "John Doe" (Optional)
@@ -2477,7 +2612,7 @@ module.exports = router;
 
 #### POST /api/admin/payments/:id/verify
 
-**Purpose**: Verify a payment proof and **activate** the linked subscription.
+**Purpose**: Verify a payment proof and **activate** the linked service (Subscription, Upgrade, or Curry Token Wallet).
 
 **Authentication**: Admin Required
 

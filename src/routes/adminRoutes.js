@@ -9,7 +9,9 @@ router.use(verifyAdmin);
 router.get("/users", adminController.getAllUsers);
 router.get("/users/:id", adminController.getUserById);
 router.put("/users/:id", adminController.updateUser);
+router.post("/users", adminController.createUser);
 router.patch("/users/:id/status", adminController.toggleUserStatus);
+router.delete("/users/:id", adminController.deleteUser);
 
 // Meal Packages
 router.get("/meal-packages", adminController.getAllMealPackages);

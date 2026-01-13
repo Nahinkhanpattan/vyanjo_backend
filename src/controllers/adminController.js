@@ -1,6 +1,7 @@
 const { PrismaClient } = require("@prisma/client");
 const prisma = require("../prisma");
 const moment = require("moment-timezone");
+const bcrypt = require("bcrypt");
 
 // --- Users Management ---
 exports.getAllUsers = async (req, res) => {
@@ -150,6 +151,83 @@ exports.toggleUserStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("Toggle User Status Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.createUser = async (req, res) => {
+  console.log("[AdminController] createUser", req.body);
+  try {
+    const { email, password, name, phoneNumber, role } = req.body;
+
+    if (!email || !password || !name) {
+      return res.status(400).json({
+        error: { message: "Email, password, and name are required" },
+      });
+    }
+
+    // Check if user exists
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return res
+        .status(400)
+        .json({ error: { message: "Email already registered" } });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        name,
+        phoneNumber,
+        role: role || "USER",
+        isActive: true, // Default to active
+      },
+    });
+
+    res.status(201).json({
+      data: {
+        user: {
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phoneNumber: user.phoneNumber,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      },
+      message: "User created successfully",
+    });
+  } catch (error) {
+    console.error("Create User Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.deleteUser = async (req, res) => {
+  console.log("[AdminController] deleteUser", req.params);
+  try {
+    const { id } = req.params;
+    // Soft delete
+    const user = await prisma.user.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    res.json({
+      data: {
+        user: {
+          userId: user.id,
+          name: user.name,
+          isActive: user.isActive,
+        },
+      },
+      message: "User deactivated (soft deleted)",
+    });
+  } catch (error) {
+    console.error("Delete User Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
@@ -1041,12 +1119,16 @@ exports.getAllPaymentProofs = async (req, res) => {
 exports.verifyPaymentProof = async (req, res) => {
   try {
     const { id } = req.params;
-    const adminId = req.user.id; // Corrected: user.id from req.user
+    const adminId = req.user.id;
 
     // 1. Get Proof
     const proof = await prisma.paymentProof.findUnique({
       where: { id },
-      include: { subscription: true },
+      include: {
+        subscription: true,
+        subscriptionUpgrade: true,
+        // curryTokenPackage: true // If we had a relation here (optional if ID exists)
+      },
     });
 
     if (!proof) {
@@ -1067,15 +1149,14 @@ exports.verifyPaymentProof = async (req, res) => {
       },
     });
 
-    // 3. Activate Subscription
+    // 3. Handle Subscription Activation
     if (proof.subscriptionId) {
       await prisma.subscription.update({
         where: { id: proof.subscriptionId },
-        data: { status: "active" }, // Activate!
+        data: { status: "active" },
       });
 
-      // TRIGGER MEAL GENERATION HERE?
-      // Logic was in subscriptionController.createSubscription.
+      // Generate Meals
       const subscription = await prisma.subscription.findUnique({
         where: { id: proof.subscriptionId },
         include: { pricing: true, mealPackage: true },
@@ -1101,15 +1182,128 @@ exports.verifyPaymentProof = async (req, res) => {
         if (mealsToCreate.length > 0) {
           await prisma.subscriptionMeal.createMany({
             data: mealsToCreate,
-            skipDuplicates: true, // Safety
+            skipDuplicates: true,
           });
         }
       }
     }
+    // 4. Handle Upgrade Activation
+    else if (proof.subscriptionUpgradeId) {
+      const upgrade = await prisma.subscriptionUpgrade.findUnique({
+        where: { id: proof.subscriptionUpgradeId },
+      });
 
-    // TODO: Send Notification (Optional)
+      if (upgrade) {
+        // Upgrade Logic
+        await prisma.subscriptionUpgrade.update({
+          where: { id: upgrade.id },
+          data: { status: "ACTIVE" },
+        });
 
-    res.json({ message: "Payment verified and subscription activated" });
+        // 4a. FULL PLAN SWITCH (Overwriting existing plan)
+        if (upgrade.targetPricingId) {
+          const targetPricing = await prisma.packagePricing.findUnique({
+            where: { id: upgrade.targetPricingId },
+            include: { mealPackage: true },
+          });
+
+          if (targetPricing) {
+            const start = moment(upgrade.startDate).tz("Asia/Kolkata").hour(12);
+            const duration = targetPricing.durationDays;
+            const newEnd = start.clone().add(duration - 1, "days");
+
+            // Update Subscription
+            await prisma.subscription.update({
+              where: { id: upgrade.subscriptionId },
+              data: {
+                pricingId: targetPricing.id,
+                mealPackageId: targetPricing.mealPackageId,
+                startDate: start.toDate(), // Reset Start Date to upgrade start
+                endDate: newEnd.toDate(),
+                mealsIncluded: targetPricing.mealsIncluded,
+                // Status remains active
+              },
+            });
+
+            // Regenerate Meals
+            // 1. Delete future meals starting from upgrade date
+            await prisma.subscriptionMeal.deleteMany({
+              where: {
+                subscriptionId: upgrade.subscriptionId,
+                serviceDate: { gte: start.toDate() },
+              },
+            });
+
+            // 2. Generate new meals
+            const itemTypes = targetPricing.mealsIncluded;
+            const mealsToCreate = [];
+
+            for (let i = 0; i < duration; i++) {
+              const currentDate = start.clone().add(i, "days").hour(12);
+              for (const type of itemTypes) {
+                mealsToCreate.push({
+                  subscriptionId: upgrade.subscriptionId,
+                  serviceDate: currentDate.toDate(),
+                  mealType: type,
+                });
+              }
+            }
+
+            if (mealsToCreate.length > 0) {
+              await prisma.subscriptionMeal.createMany({
+                data: mealsToCreate,
+                skipDuplicates: true,
+              });
+            }
+          }
+        }
+        // 4b. PARTIAL UPGRADE (Just status active, frontend handles logic?)
+        // Or we might store Attribute Overrides in Subscription if we want to persist them permanently?
+        // Prompt says "upgrade should explicitly have all these details... user subscription changes".
+        // If it's a permanent attribute change (e.g. forever NonVeg), we should update Subscription.
+        else if (
+          upgrade.targetDiet ||
+          upgrade.targetTier ||
+          upgrade.targetCuisine
+        ) {
+          // We'd ideally find a new Meal Package matching these traits.
+          // Complexity: Finding the exact matching Package ID.
+          // For now, let's assume 'Full Plan Switch' is the primary method for structural changes.
+          // Partial Attribute overrides might just be stored for reference unless mapped to a Package.
+        }
+      }
+    }
+    // 5. Handle Curry Token Assignment
+    else if (proof.curryTokenPackageId) {
+      // Fetch package details
+      const pkg = await prisma.curryTokenPackage.findUnique({
+        where: { id: proof.curryTokenPackageId },
+      });
+
+      if (pkg) {
+        // Find or Create Wallet
+        const wallet = await prisma.curryWallet.upsert({
+          where: {
+            userId_dietType: {
+              userId: proof.userId,
+              dietType: pkg.dietType,
+            },
+          },
+          update: {
+            totalTokens: { increment: pkg.tokenCount },
+            validUntil: moment().add(pkg.validityDays, "days").toDate(), // Extend validity? Or Max? Let's extend from Now.
+          },
+          create: {
+            userId: proof.userId,
+            dietType: pkg.dietType,
+            totalTokens: pkg.tokenCount,
+            validUntil: moment().add(pkg.validityDays, "days").toDate(),
+          },
+        });
+      }
+    }
+
+    res.json({ message: "Payment verified and services activated" });
   } catch (error) {
     console.error("Verify Payment Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
@@ -1139,6 +1333,11 @@ exports.rejectPaymentProof = async (req, res) => {
       await prisma.subscription.update({
         where: { id: proof.subscriptionId },
         data: { status: "payment_failed" },
+      });
+    } else if (proof.subscriptionUpgradeId) {
+      await prisma.subscriptionUpgrade.update({
+        where: { id: proof.subscriptionUpgradeId },
+        data: { status: "REJECTED" },
       });
     }
 

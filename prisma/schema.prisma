@@ -77,6 +77,8 @@ model MealPackage {
   name                  String           @db.VarChar(150)
   dietType              String           @map("diet_type") @db.VarChar(20)
   cuisineType           String           @map("cuisine_type") @db.VarChar(20)
+  description           String?          @db.VarChar(500)
+  imageUrl              String?          @map("image_url")
   defaultContainer      String           @map("default_container") @db.VarChar(20)
   allowsContainerChoice Boolean          @default(false) @map("allows_container_choice")
   allowsDietUpgrade     Boolean          @default(false) @map("allows_diet_upgrade")
@@ -323,6 +325,8 @@ model UpgradePrice {
   @@map("upgrade_prices")
 }
 
+
+
 model SubscriptionUpgrade {
   id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   subscriptionId  String       @map("subscription_id") @db.Uuid
@@ -331,6 +335,7 @@ model SubscriptionUpgrade {
   startDate       DateTime     @map("start_date") @db.Date
   endDate         DateTime     @map("end_date") @db.Date
   price           Decimal      @db.Decimal(10, 2)
+  status          String       @default("PENDING") @db.VarChar(20)
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   originalCuisine String?      @map("original_cuisine") @db.VarChar(20)
   originalDiet    String?      @map("original_diet") @db.VarChar(20)
@@ -338,11 +343,15 @@ model SubscriptionUpgrade {
   targetCuisine   String?      @map("target_cuisine") @db.VarChar(20)
   targetDiet      String?      @map("target_diet") @db.VarChar(20)
   targetTier      PlanTier?    @map("target_tier")
+  // New Fields for Full Plan Switch
+  targetPricingId     String? @map("target_pricing_id") @db.Uuid
+  targetMealPackageId String? @map("target_meal_package_id") @db.Uuid
+
   subscription    Subscription @relation(fields: [subscriptionId], references: [id])
+  paymentProof    PaymentProof?
 
   @@map("subscription_upgrades")
 }
-
 model Notification {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
@@ -428,6 +437,7 @@ model PaymentProof {
   id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId              String    @map("user_id") @db.Uuid
   subscriptionId      String?   @unique @map("subscription_id") @db.Uuid
+  subscriptionUpgradeId String? @unique @map("subscription_upgrade_id") @db.Uuid
   curryTokenPackageId String?   @map("curry_token_package_id") @db.Uuid
   amount              Decimal   @db.Decimal(10, 2)
   transactionId       String    @map("transaction_id") @db.VarChar(100)
@@ -441,6 +451,7 @@ model PaymentProof {
 
   user         User          @relation(fields: [userId], references: [id])
   subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  subscriptionUpgrade SubscriptionUpgrade? @relation(fields: [subscriptionUpgradeId], references: [id])
   verifier     User?         @relation("PaymentVerifier", fields: [verifiedBy], references: [id])
 
   @@map("payment_proofs")

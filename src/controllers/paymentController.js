@@ -31,6 +31,7 @@ exports.submitPaymentProof = async (req, res) => {
     const {
       subscriptionId,
       curryTokenPackageId,
+      subscriptionUpgradeId,
       amount,
       transactionId,
       payerName,
@@ -45,13 +46,12 @@ exports.submitPaymentProof = async (req, res) => {
         .json({ error: { message: "Screenshot URL is required" } });
     }
 
-    // const screenshotUrl = req.file.path; // REMOVED: Using body url
-
-    // Validate Subscription or Curry Package
-    if (!subscriptionId && !curryTokenPackageId) {
+    // Validate valid target
+    if (!subscriptionId && !curryTokenPackageId && !subscriptionUpgradeId) {
       return res.status(400).json({
         error: {
-          message: "Must provide subscriptionId or curryTokenPackageId",
+          message:
+            "Must provide subscriptionId, curryTokenPackageId, or subscriptionUpgradeId",
         },
       });
     }
@@ -72,6 +72,7 @@ exports.submitPaymentProof = async (req, res) => {
         userId,
         subscriptionId,
         curryTokenPackageId,
+        subscriptionUpgradeId,
         amount: parseFloat(amount),
         transactionId,
         screenshotUrl,

@@ -20,6 +20,7 @@ router.post(
   subscriptionController.createSubscription
 );
 router.post("/:id/upgrade", subscriptionController.createUpgrade);
+router.get("/:id/upgrades", subscriptionController.getAvailableUpgrades);
 router.post("/:id/pause", subscriptionController.pauseSubscription);
 router.post("/:id/resume", subscriptionController.resumeSubscription);
 router.get("/:id/pauses", subscriptionController.getSubscriptionPauses);

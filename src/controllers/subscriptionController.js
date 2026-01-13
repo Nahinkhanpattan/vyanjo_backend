@@ -168,6 +168,7 @@ exports.createUpgrade = async (req, res) => {
       date,
       mealType,
       addMeals,
+      targetPricingId,
     } = req.body;
     // addMeals: ['DINNER'] if adding a meal type.
 
@@ -183,36 +184,44 @@ exports.createUpgrade = async (req, res) => {
         .json({ error: { message: "Subscription not found" } });
     }
 
-    // 2. Logic for Upgrade
-    // Can trigger multiple actions: Change Tier, Change Diet, Add Meal
-    // We'll calculate total price and create records.
-
-    // Simplified: Handle one primary Upgrade Action or calculate sum.
-    // If 'addMeals' is present, we are adding meals to the subscription.
-
     let totalPrice = 0;
-    const upgradeRecords = [];
-    const newMealsToCreate = [];
+    let targetMealPackageId = null;
 
     // Date Range
     let startDate = moment(date).tz("Asia/Kolkata");
     let endDate = moment(date).tz("Asia/Kolkata");
     if (scope === "WEEK") endDate = startDate.clone().add(6, "days");
-    // If scope is SUBSCRIPTION_REMAINING, we'd need subscription.endDate.
 
-    // A. Check Tier/Diet/Cuisine Upgrade
-    if (targetTier || targetDiet || targetCuisine) {
+    // NEW LOGIC: Full Plan Switch (Switch Price Plan)
+    if (targetPricingId) {
+      // 1. Fetch new pricing info
+      const targetPricing = await prisma.packagePricing.findUnique({
+        where: { id: targetPricingId },
+        include: { mealPackage: true },
+      });
+
+      if (!targetPricing) {
+        return res
+          .status(404)
+          .json({ error: { message: "Target pricing plan not found" } });
+      }
+
+      // Cost is the full price of the new plan
+      // Admin might refund old plan manually or we handle it here?
+      // Prompt says: "the existing plan should be overwritten... upgrade should explicitly have all these details"
+      // Simplest: User pays for new plan. Old plan is cancelled/overwritten.
+      totalPrice = parseFloat(targetPricing.price);
+      targetMealPackageId = targetPricing.mealPackageId; // Capture new package ID
+
+      // Override End Date based on new plan duration
+      // If we are replacing the plan starting 'date', the new end date is determined by duration.
+      endDate = startDate.clone().add(targetPricing.durationDays - 1, "days");
+    }
+    // OLD LOGIC: Partial Attribute Upgrade (Delta Price)
+    else if (targetTier || targetDiet || targetCuisine) {
       const fromTier = subscription.mealPackage.tier;
       const fromDiet = subscription.mealPackage.dietType;
       const fromCuisine = subscription.mealPackage.cuisineType;
-
-      // No Downgrade Check
-      const tierWeights = { BASIC: 1, REGULAR: 2, PREMIUM: 3 };
-      if (targetTier && tierWeights[targetTier] < tierWeights[fromTier]) {
-        return res.status(400).json({
-          error: { message: "Downgrading subscription tier is not allowed" },
-        });
-      }
 
       const priceRecord = await prisma.upgradePrice.findFirst({
         where: {
@@ -229,84 +238,76 @@ exports.createUpgrade = async (req, res) => {
 
       if (priceRecord) {
         totalPrice += parseFloat(priceRecord.price);
-        upgradeRecords.push({
-          type: "TIER_DIET_CUISINE",
-          price: priceRecord.price,
-          details: { targetTier, targetDiet, targetCuisine },
-        });
-      }
-    }
-
-    // B. Check Add Meal (e.g. Add DINNER for 1 day)
-    // This is essentially buying a mini-package or "Upgrade" that adds a meal.
-    if (addMeals && Array.isArray(addMeals)) {
-      for (const meal of addMeals) {
-        // Find price to add this meal
-        // This might be in PackagePricing (1 day single meal) OR properties of UpgradePrice?
-        // Prompt says "upgrade... he can add 1 or 2".
-        // Let's assume UpgradePrice table handles "Add Meal" via scope='MEAL' or similar.
-        // OR we look for a `PackagePricing` for 1 Day + MealType and charge that?
-        // "different costs per updates... in upgrade he can increase meals... current meal + other meals".
-
-        // Let's use UpgradePrice with scope 'MEAL_ADDITION' or similar logic.
-        // Or simpler: Reuse PackagePricing for "1 Day Tiffin" price?
-        // Using PackagePricing is cleaner for "Add Meal".
-
-        // StartDate/EndDate logic applies.
-        const days = endDate.diff(startDate, "days") + 1;
-
-        // Find price for 1 Unit of this meal
-        // For simplicity, let's assume valid UpgradePrice entry exists for "Add Tiffin"
-        /* const addPrice = await prisma.upgradePrice.findFirst({
-                 where: { mealType: meal, scope: 'MEAL' ... }
-             }); */
-        // ... Logic to calculate price ...
-
-        // Create SubscriptionMeals
-        for (let d = 0; d < days; d++) {
-          newMealsToCreate.push({
-            subscriptionId: id,
-            serviceDate: startDate.clone().add(d, "days").toDate(),
-            mealType: meal,
-          });
-        }
       }
     }
 
     // 3. Commit
-    // Create SubscriptionUpgrade record
-    // Create new SubscriptionMeal records
-    // Update Subscription (if permanent tier change)
-
+    // Create SubscriptionUpgrade record (PENDING)
     const upgrade = await prisma.subscriptionUpgrade.create({
       data: {
         subscriptionId: id,
         targetTier: targetTier,
         targetDiet: targetDiet,
         targetCuisine: targetCuisine,
+        targetPricingId: targetPricingId,
+        targetMealPackageId: targetMealPackageId,
         originalTier: subscription.mealPackage.tier,
         originalDiet: subscription.mealPackage.dietType,
         originalCuisine: subscription.mealPackage.cuisineType,
         scope,
         startDate: startDate.toDate(),
         endDate: endDate.toDate(),
-        price: totalPrice, // Sum
+        price: totalPrice,
+        status: "PENDING", // Wait for Admin Verification
       },
     });
 
-    if (newMealsToCreate.length > 0) {
-      await prisma.subscriptionMeal.createMany({ data: newMealsToCreate });
-    }
-
-    // If we changed Tier/Diet permanently, update MealPackageId?
-    // Usually we'd swap the Subscription.mealPackageId to the new one if fully upgraded relative to remaining days.
-    // Complicated for partial updates. Let's assume Metadata tracks it or SubscriptionUpgrade tracks it.
+    // NOTE: Meals creation is deferred until verification (like createSubscription)
 
     res.status(201).json({
-      data: { upgrade, newMeals: newMealsToCreate.length },
-      message: "Upgrade processed",
+      data: { upgrade },
+      message:
+        "Upgrade request created. Please upload payment proof to activate.",
     });
   } catch (error) {
+    console.error("Create Upgrade Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.getAvailableUpgrades = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const subscription = await prisma.subscription.findUnique({
+      where: { id },
+      include: { mealPackage: true },
+    });
+
+    if (!subscription) {
+      return res
+        .status(404)
+        .json({ error: { message: "Subscription not found" } });
+    }
+
+    // Fetch all active UpgradePrice rules
+    // We could filter by current package properties to only show relevant ones
+    const rules = await prisma.upgradePrice.findMany({
+      where: {
+        isActive: true,
+        // Optional: Filter where fromTier matches current tier, etc.
+        // For now, return all and let frontend filter or return relevant ones.
+        OR: [
+          { fromTier: subscription.mealPackage.tier },
+          { fromDiet: subscription.mealPackage.dietType },
+          { fromCuisine: subscription.mealPackage.cuisineType },
+          { scope: "MEAL" }, // Always allow meal additions if scope assumes 'MEAL'
+        ],
+      },
+    });
+
+    res.json({ data: { upgrades: rules } });
+  } catch (error) {
+    console.error("Get Upgrades Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };

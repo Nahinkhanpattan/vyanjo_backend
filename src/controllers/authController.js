@@ -150,3 +150,50 @@ exports.updateProfile = async (req, res) => {
     });
   }
 };
+
+exports.getProfile = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phoneNumber: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        isActive: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: { message: "User not found" } });
+    }
+
+    res.json({
+      data: { user },
+      message: "Profile retrieved successfully",
+    });
+  } catch (error) {
+    console.error("Get Profile Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.deleteProfile = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    // Soft delete
+    await prisma.user.update({
+      where: { id: userId },
+      data: { isActive: false },
+    });
+
+    res.json({ message: "Profile deactivated successfully" });
+  } catch (error) {
+    console.error("Delete Profile Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};

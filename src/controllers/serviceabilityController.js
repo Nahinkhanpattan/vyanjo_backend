@@ -1,7 +1,16 @@
 const prisma = require("../prisma");
 
-// List of allowed districts
-const ALLOWED_DISTRICTS = ["Guntur", "Hyderabad"];
+// List of allowed pincodes (Replaces District-based check)
+const ALLOWED_PINCODES = [
+  "500072",
+  "500049",
+  "500018",
+  "500016",
+  "500038",
+  "560027",
+  "560030",
+  "500081",
+];
 
 exports.checkServiceability = async (req, res) => {
   try {
@@ -13,38 +22,15 @@ exports.checkServiceability = async (req, res) => {
       });
     }
 
-    // Find pincode in DB
-    const pincodeRecord = await prisma.pincode.findUnique({
-      where: { code: pincode },
-      include: {
-        district: true,
-      },
-    });
-
-    if (!pincodeRecord) {
-      return res.status(404).json({
-        error: {
-          message: "Pincode not found",
-          code: "PINCODE_NOT_FOUND",
-          status: 404,
-        },
-      });
-    }
-
-    // Check if district is allowed
-    // Using case-insensitive check just in case, though DB has exact names
-    const districtName = pincodeRecord.district.name;
-    const isServiceable = ALLOWED_DISTRICTS.some(
-      (d) => d.toLowerCase() === districtName.toLowerCase()
-    );
+    const code = pincode.toString().trim();
+    const isServiceable = ALLOWED_PINCODES.includes(code);
 
     if (!isServiceable) {
       return res.status(400).json({
         data: {
           serviceable: false,
-          pincode: pincode,
-          city: districtName,
-          message: `Service not available in ${districtName}. We only serve Guntur and Hyderabad.`,
+          pincode: code,
+          message: `Service not available in ${code}. We only serve specific locations.`,
         },
       });
     }
@@ -52,8 +38,7 @@ exports.checkServiceability = async (req, res) => {
     res.json({
       data: {
         serviceable: true,
-        pincode: pincode,
-        city: districtName,
+        pincode: code,
         message: "Service available",
       },
     });
@@ -75,26 +60,13 @@ exports.validatePincodeInternal = async (pincode_str) => {
   // Normalize string
   const code = pincode_str.toString().trim();
 
-  const pincodeRecord = await prisma.pincode.findUnique({
-    where: { code },
-    include: { district: true },
-  });
-
-  if (!pincodeRecord)
-    return {
-      valid: false,
-      message: "Invalid Pincode: Not found in our database",
-    };
-
-  const districtName = pincodeRecord.district.name;
-  const isServiceable = ALLOWED_DISTRICTS.some(
-    (d) => d.toLowerCase() === districtName.toLowerCase()
-  );
+  // Static Check (No DB Lookup required)
+  const isServiceable = ALLOWED_PINCODES.includes(code);
 
   if (!isServiceable)
     return {
       valid: false,
-      message: `Service not available in ${districtName}`,
+      message: `Service not available in ${code}`,
     };
 
   return { valid: true };
