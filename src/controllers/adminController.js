@@ -362,6 +362,9 @@ exports.createMealPackage = async (req, res) => {
               durationDays: parseInt(item.durationDays),
               mealsIncluded: item.mealsIncluded,
               price: parseFloat(item.price),
+              allowedServiceDays: Array.isArray(item.allowedServiceDays)
+                ? item.allowedServiceDays
+                : [], // Empty means ALL days allowed, or strict? Convention: Empty=All or Null=All. Prisma Int[] default is empty list []
               isActive: true,
             },
           });
@@ -382,12 +385,98 @@ exports.createMealPackage = async (req, res) => {
 exports.updateMealPackage = async (req, res) => {
   try {
     const { id } = req.params;
-    const data = req.body;
+    // Allow updating all fields + pricings
+    const {
+      name,
+      tier,
+      description,
+      imageUrl,
+      isActive,
+      defaultContainer,
+      allowsContainerChoice,
+      allowsDietUpgrade,
+      allowsCuisineUpgrade,
+      pricings, // Array of { durationDays, mealsIncluded, price, ... }
+    } = req.body;
+
+    // 1. Update MealPackage Scalars
     const mealPackage = await prisma.mealPackage.update({
       where: { id },
-      data,
+      data: {
+        name,
+        tier,
+        description,
+        imageUrl,
+        isActive,
+        defaultContainer,
+        allowsContainerChoice,
+        allowsDietUpgrade,
+        allowsCuisineUpgrade,
+      },
+      include: { pricingOptions: true },
     });
-    res.json({ data: { mealPackage }, message: "Meal Package updated" });
+
+    // 2. Handle Pricings (Upsert Logic)
+    // We match incoming pricings to existing ones based on "Signature": Duration + Sorted Meals
+    if (pricings && Array.isArray(pricings)) {
+      const existingPricings = mealPackage.pricingOptions;
+
+      for (const p of pricings) {
+        if (!p.durationDays || !p.mealsIncluded || !p.price) continue;
+
+        const duration = parseInt(p.durationDays);
+        const meals = Array.isArray(p.mealsIncluded) ? p.mealsIncluded : [];
+        const sortedMeals = [...meals].sort().join(","); // Signature key
+        const price = parseFloat(p.price);
+
+        // Find match
+        const match = existingPricings.find((ep) => {
+          const epMeals = [...ep.mealsIncluded].sort().join(",");
+          return ep.durationDays === duration && epMeals === sortedMeals;
+        });
+
+        if (match) {
+          // UPDATE Existing
+          await prisma.packagePricing.update({
+            where: { id: match.id },
+            data: {
+              price: price,
+              name: `${duration} Days - ${meals.join("+")}`, // Refresh name
+              allowedServiceDays: Array.isArray(p.allowedServiceDays)
+                ? p.allowedServiceDays
+                : match.allowedServiceDays, // Update if provided, else keep existing? OR overwrite. better overwrite if we want full edit.
+              isActive: p.isActive !== undefined ? p.isActive : true,
+            },
+          });
+        } else {
+          // CREATE New
+          await prisma.packagePricing.create({
+            data: {
+              mealPackageId: id,
+              name: `${duration} Days - ${meals.join("+")}`,
+              durationDays: duration,
+              mealsIncluded: meals,
+              allowedServiceDays: Array.isArray(p.allowedServiceDays)
+                ? p.allowedServiceDays
+                : [],
+              price: price,
+              isActive: true,
+            },
+          });
+        }
+      }
+    }
+
+    // Return updated full object
+    const updatedPackage = await prisma.mealPackage.findUnique({
+      where: { id },
+      include: { pricingOptions: true },
+    });
+
+    res.json({
+      data: { mealPackage: updatedPackage },
+      message: "Meal Package and pricing variants updated",
+    });
   } catch (error) {
     console.error("Update Meal Package Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
@@ -397,12 +486,31 @@ exports.updateMealPackage = async (req, res) => {
 exports.deleteMealPackage = async (req, res) => {
   try {
     const { id } = req.params;
-    // Soft delete
-    const mealPackage = await prisma.mealPackage.update({
-      where: { id },
-      data: { isActive: false },
-    });
-    res.json({ data: { mealPackage }, message: "Meal Package deactivated" });
+    // Requirement: "delete means completely deleting the package"
+    // CAUTION: This will fail if there are active subscriptions due to foreign key constraints
+    // unless cascading delete is set up on Subscription (which it usually isn't for historical data safety).
+    // Prisma Schema check: Subscription -> relation(fields: [mealPackageId], references: [id]) -> defaults to NO ACTION / RESTRICT.
+
+    try {
+      const mealPackage = await prisma.mealPackage.delete({
+        where: { id },
+      });
+      res.json({
+        data: { mealPackage },
+        message: "Meal Package deleted permanently",
+      });
+    } catch (dbError) {
+      // Handle Foreign Key Constraint violation (P2003)
+      if (dbError.code === "P2003") {
+        return res.status(409).json({
+          error: {
+            message:
+              "Cannot delete package as it is associated with existing subscriptions.",
+          },
+        });
+      }
+      throw dbError;
+    }
   } catch (error) {
     console.error("Delete Meal Package Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
@@ -426,7 +534,11 @@ exports.createPackagePricing = async (req, res) => {
         mealPackageId,
         name,
         durationDays: parseInt(durationDays),
+
         mealsIncluded, // Expects array e.g. ["LUNCH", "DINNER"]
+        allowedServiceDays: Array.isArray(req.body.allowedServiceDays)
+          ? req.body.allowedServiceDays
+          : [],
         price: parseFloat(price),
         isActive: true,
       },
@@ -1150,19 +1262,55 @@ exports.verifyPaymentProof = async (req, res) => {
     });
 
     // 3. Handle Subscription Activation
+    // 3. Handle Subscription Activation
     if (proof.subscriptionId) {
-      await prisma.subscription.update({
-        where: { id: proof.subscriptionId },
-        data: { status: "active" },
-      });
+      const now = moment().tz("Asia/Kolkata");
+      const tomorrow = now.clone().add(1, "days").startOf("day");
 
-      // Generate Meals
-      const subscription = await prisma.subscription.findUnique({
+      // Fetch subscription first to check dates
+      let subscription = await prisma.subscription.findUnique({
         where: { id: proof.subscriptionId },
         include: { pricing: true, mealPackage: true },
       });
 
       if (subscription && subscription.pricing) {
+        const originalStart = moment(subscription.startDate)
+          .tz("Asia/Kolkata")
+          .startOf("day");
+
+        let startToUse = originalStart;
+
+        // "i want it to be done from the next day of verification"
+        // If the original start date is today or in the past (relative to verification time),
+        // we shift it to tomorrow.
+        if (originalStart.isBefore(tomorrow)) {
+          console.log(
+            `[Verification] Late Verification. Shifting start date from ${originalStart.format()} to ${tomorrow.format()}`
+          );
+          const duration = subscription.pricing.durationDays;
+          startToUse = tomorrow;
+          const newEnd = startToUse.clone().add(duration - 1, "days");
+
+          // Update the subscription with the new dates
+          subscription = await prisma.subscription.update({
+            where: { id: subscription.id },
+            data: {
+              status: "active",
+              startDate: startToUse.toDate(),
+              endDate: newEnd.toDate(),
+            },
+            include: { pricing: true, mealPackage: true },
+          });
+        } else {
+          // Standard activation for future dates
+          await prisma.subscription.update({
+            where: { id: proof.subscriptionId },
+            data: { status: "active" },
+          });
+        }
+
+        // Generate Meals
+        // Use the updated subscription dates
         const start = moment(subscription.startDate).tz("Asia/Kolkata");
         const duration = subscription.pricing.durationDays;
         const itemTypes = subscription.mealsIncluded;

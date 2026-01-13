@@ -60,6 +60,35 @@ exports.createSubscription = async (req, res) => {
     const duration = pricing.durationDays;
     const end = start.clone().add(duration - 1, "days");
 
+    // VALIDATION: allowedServiceDays (Wed/Sun Logic)
+    // pricing.allowedServiceDays is Int[] (0=Sun, 1=Mon, ..., 6=Sat)
+    // If empty/null, all days are allowed.
+    if (
+      pricing.allowedServiceDays &&
+      Array.isArray(pricing.allowedServiceDays) &&
+      pricing.allowedServiceDays.length > 0
+    ) {
+      const allowedDays = new Set(pricing.allowedServiceDays);
+      const current = start.clone();
+      // Check every day of the subscription
+      for (let i = 0; i < duration; i++) {
+        const dayOfWeek = current.day(); // 0-6 (Sun-Sat)
+        if (!allowedDays.has(dayOfWeek)) {
+          return res.status(400).json({
+            error: {
+              message: `The selected plan does not allow service on ${current.format(
+                "dddd"
+              )} (${current.format(
+                "YYYY-MM-DD"
+              )}). Please select a plan that covers this day.`,
+              code: "INVALID_SERVICE_DAY",
+            },
+          });
+        }
+        current.add(1, "days");
+      }
+    }
+
     // Validate if address_id is a real UUID, otherwise set to null
     const isValidUUID = (id) =>
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
