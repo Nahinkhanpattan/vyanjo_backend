@@ -792,3 +792,40 @@ exports.getSubscriptionPauses = async (req, res) => {
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
+
+exports.deleteUnpaidSubscription = async (req, res) => {
+  console.log("[SubscriptionController] deleteUnpaidSubscription");
+  try {
+    const userId = req.user.id;
+
+    // Find PENDING PAYMENT subscription
+    const subscription = await prisma.subscription.findFirst({
+      where: {
+        userId,
+        status: "pending_payment",
+      },
+    });
+
+    if (!subscription) {
+      return res.status(404).json({
+        error: {
+          message:
+            "No unpaid subscription found to delete. You may have an active subscription or none at all.",
+        },
+      });
+    }
+
+    // Delete it
+    await prisma.subscription.delete({
+      where: { id: subscription.id },
+    });
+
+    res.json({
+      message:
+        "Unpaid subscription cancelled successfully. You can now select a new package.",
+    });
+  } catch (error) {
+    console.error("Delete Unpaid Subscription Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};

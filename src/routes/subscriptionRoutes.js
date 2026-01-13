@@ -25,5 +25,6 @@ router.post("/:id/pause", subscriptionController.pauseSubscription);
 router.post("/:id/resume", subscriptionController.resumeSubscription);
 router.get("/:id/pauses", subscriptionController.getSubscriptionPauses);
 router.get("/active", subscriptionController.getActiveSubscription);
+router.delete("/unpaid", subscriptionController.deleteUnpaidSubscription);
 
 module.exports = router;
