@@ -27,7 +27,8 @@ model User {
   curryWallets   CurryWallet[]
   uploadedProofs PaymentProof[]
   verifiedProofs PaymentProof[] @relation("PaymentVerifier")
-
+  commonPoints   CommonPoint[]
+  
   @@map("users")
 }
 
@@ -42,6 +43,11 @@ model CommonPoint {
   longitude    Decimal?  @db.Decimal(9, 6)
   isActive     Boolean   @default(true) @map("is_active")
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  
+  // New: Owner of the common point (Optional, null = Global/Admin)
+  userId       String?   @map("user_id") @db.Uuid
+  user         User?     @relation(fields: [userId], references: [id])
+  
   addresses    Address[]
 
   @@map("common_points")

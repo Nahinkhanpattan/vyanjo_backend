@@ -794,6 +794,7 @@ model Issue {
 
 - `search` (optional): Search term for name/city/pincode
 - `city` (optional): Filter by city
+- `type` (optional): `global` (only system points), `personal` (only user points). Default: Both
 
 **Response (200)**:
 
@@ -848,7 +849,13 @@ model Issue {
         "longitude": 78.486,
         "phoneNumber": "+919876543210",
         "isPrimary": true,
-        "commonPoint": null,
+        "commonPointId": "uuid-of-cp",
+        "commonPoint": {
+          "id": "uuid-of-cp",
+          "name": "My Hostel",
+          "isActive": true,
+          "userId": "uuid-user-id" // or null for global
+        },
         "createdAt": "2025-01-10T09:00:00Z"
       }
     ]
@@ -898,7 +905,7 @@ model Issue {
 - `pincode`: Required, 6 digits
 - `latitude`: Optional, decimal (-90 to 90)
 - `longitude`: Optional, decimal (-180 to 180)
-- `commonPointId`: Optional, must exist if provided
+- `commonPointId`: Optional, must exist if provided (Active and owned by user or global)
 - `phoneNumber`: Optional, 10-15 digits with optional +91 prefix
 - `isPrimary`: Optional boolean
 
@@ -906,7 +913,11 @@ model Issue {
 
 1. If this is user's first address, automatically set `isPrimary = true` regardless of request value
 2. If `isPrimary = true` in request, update all other user addresses to `isPrimary = false`
-3. Create address record
+3. If `commonPointId` provided:
+   - Must exist
+   - Must be `isActive = true`
+   - Must be Global or Owned by current user
+4. Create address record
 
 **Response (201)**:
 
@@ -923,7 +934,8 @@ model Issue {
 
 **Errors**:
 
-- 400 if validation fails
+- 400 if validation fails or Common Point is inactive
+- 403 if unauthorized access to private Common Point
 - 404 if `commonPointId` doesn't exist
 
 #### PUT /api/addresses/:id
@@ -990,6 +1002,86 @@ model Issue {
 - 403 if doesn't belong to user
 - 404 if not found
 - 422 if used in active subscription
+
+#### POST /api/common-points
+
+**Purpose**: Create a new user-specific Common Point (e.g. Private Hostel/PG)
+
+**Authentication**: Required
+
+**Request Body**:
+
+```json
+{
+  "name": "My Hostel",
+  "addressLine1": "H.No 1-2-3",
+  "city": "Hyderabad",
+  "state": "Telangana",
+  "pincode": "500001",
+  "latitude": 17.123,
+  "longitude": 78.123
+}
+```
+
+**Response (201)**:
+
+```json
+{
+  "data": {
+    "commonPoint": {
+      "id": "uuid",
+      "name": "My Hostel",
+      "isActive": true,
+      "createdAt": "..."
+    }
+  },
+  "message": "Common Point created"
+}
+```
+
+#### PUT /api/common-points/:id
+
+**Purpose**: Update a user-specific Common Point
+
+**Authentication**: Required
+
+**Authorization**: Only the creator can update
+
+**Request Body**: Partial update of fields allowed
+
+**Response (200)**:
+
+```json
+{
+  "data": {
+    "commonPoint": {
+      /* updated object */
+    }
+  },
+  "message": "Common Point updated"
+}
+```
+
+#### DELETE /api/common-points/:id
+
+**Purpose**: Delete (Soft Delete) a user-specific Common Point
+
+**Authentication**: Required
+
+**Authorization**: Only the creator can delete
+
+**Response (200)**:
+
+```json
+{
+  "data": {
+    "commonPoint": {
+      "isActive": false
+    }
+  },
+  "message": "Common Point deleted"
+}
+```
 
 ---
 
