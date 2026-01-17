@@ -63,16 +63,70 @@ exports.getCommonPoints = async (req, res) => {
   }
 };
 
+// Helper to title case strings
+const toTitleCase = (str) => {
+  if (!str) return str;
+  return str.replace(
+    /\w\S*/g,
+    (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase(),
+  );
+};
+
 exports.createCommonPoint = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const data = req.body;
+    const { name, addressLine1, city, state, pincode, latitude, longitude } =
+      req.body;
 
-    // Force user_id
-    data.userId = userId;
-    data.isActive = true;
+    // 1. Normalize casing (Title Case for consistency)
+    const normalizedName = toTitleCase(name ? name.trim() : "");
+    const normalizedCity = city ? toTitleCase(city.trim()) : city;
+    const normalizedAddress = addressLine1
+      ? toTitleCase(addressLine1.trim())
+      : addressLine1;
 
-    const commonPoint = await prisma.commonPoint.create({ data });
+    if (!normalizedName) {
+      return res.status(400).json({ error: { message: "Name is required" } });
+    }
+
+    // 2. Check for duplicates (Name matches, AND either Pincode or City matches)
+    // We check globally (userId: null) or anything really, since we want to reuse ANY existing point that matches.
+    const duplicate = await prisma.commonPoint.findFirst({
+      where: {
+        name: { equals: normalizedName, mode: "insensitive" },
+        isActive: true, // Only check active points
+        OR: [
+          { pincode: pincode ? pincode.trim() : undefined },
+          { city: { equals: normalizedCity, mode: "insensitive" } },
+        ],
+      },
+    });
+
+    if (duplicate) {
+      console.log(
+        `[CommonPoint] Duplicate found: ${normalizedName}. Returning existing ID: ${duplicate.id}`,
+      );
+      return res.status(200).json({
+        data: { commonPoint: duplicate },
+        message: "Common Point already exists. Using existing one.",
+      });
+    }
+
+    // 3. Create new Global Common Point (userId: null)
+    // "make other users common point as global" -> implies shared immediately.
+    const commonPoint = await prisma.commonPoint.create({
+      data: {
+        name: normalizedName,
+        addressLine1: normalizedAddress,
+        city: normalizedCity,
+        state,
+        pincode,
+        latitude,
+        longitude,
+        userId: null, // Global
+        isActive: true,
+      },
+    });
+
     res
       .status(201)
       .json({ data: { commonPoint }, message: "Common Point created" });
