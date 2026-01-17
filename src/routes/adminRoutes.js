@@ -87,4 +87,14 @@ router.get("/payments", adminController.getAllPaymentProofs);
 router.post("/payments/:id/verify", adminController.verifyPaymentProof);
 router.post("/payments/:id/reject", adminController.rejectPaymentProof);
 
+// Order Management
+router.get("/orders/stats", adminController.getOrderStats);
+router.get("/orders/users", adminController.getUsersWithOrders);
+router.get(
+  "/users/:id/delivery-details",
+  adminController.getUserDeliveryDetails
+);
+router.patch("/meals/:id/status", adminController.updateMealStatus);
+router.get("/earnings/daily", adminController.getDailyEarnings);
+
 module.exports = router;

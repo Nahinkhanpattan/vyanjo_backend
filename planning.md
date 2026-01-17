@@ -2732,6 +2732,138 @@ module.exports = router;
 
 ---
 
+### Module 16: Admin Order Management
+
+**Base Path**: `/api/admin`
+
+#### GET /api/admin/orders/stats
+
+**Purpose**: Get aggregated order counts for a specific date, grouped by tier, diet, and cuisine.
+
+**Authentication**: Admin Required
+
+**Query Parameters**:
+- `date` (required): Date in `YYYY-MM-DD` format.
+
+**Response (200)**:
+```json
+{
+  "data": {
+    "stats": [
+      {
+        "tier": "basic",
+        "dietType": "veg",
+        "cuisineType": "south_indian",
+        "count": 5
+      }
+    ]
+  }
+}
+```
+
+#### GET /api/admin/orders/users
+
+**Purpose**: List users who have meals scheduled for a specific date, with delivery status.
+
+**Authentication**: Admin Required
+
+**Query Parameters**:
+- `date` (required): Date in `YYYY-MM-DD` format.
+
+**Response (200)**:
+```json
+{
+  "data": {
+    "users": [
+      {
+        "userId": "uuid",
+        "name": "John Doe",
+        "phoneNumber": "9999999999",
+        "meals": [
+          {
+            "mealId": "uuid",
+            "mealType": "LUNCH",
+            "status": "PENDING", // PENDING, PREPARING, READY, IN_DELIVERY, COMPLETED
+            "pkgName": "Basic Veg",
+            "deliverySlot": "12:00 - 13:00",
+            "address": { "addressLine1": "...", "city": "..." }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+#### GET /api/admin/users/:id/delivery-details
+
+**Purpose**: Get detailed view of a user's subscriptions, recent meals, and order history.
+
+**Authentication**: Admin Required
+
+**Path Parameters**:
+- `id`: User UUID.
+
+**Response (200)**:
+```json
+{
+  "data": {
+    "user": {
+      "id": "uuid",
+      "name": "John Doe",
+      "subscriptions": [ ... ], // Includes active subscriptions and their recent meals with statuses
+      "curryOrders": [ ... ]
+    }
+  }
+}
+```
+
+#### PATCH /api/admin/meals/:id/status
+
+**Purpose**: Update the status of a specific meal.
+
+**Authentication**: Admin Required
+
+**Path Parameters**:
+- `id`: SubscriptionMeal UUID.
+
+**Request Body**:
+```json
+{
+  "status": "In Delivery" // Case insensitive
+}
+```
+
+**Response (200)**:
+```json
+{
+  "data": { "meal": { "id": "uuid", "status": "IN_DELIVERY", ... } },
+  "message": "Status updated"
+}
+```
+
+#### GET /api/admin/earnings/daily
+
+**Purpose**: Get total verified earnings for a specific date.
+
+**Authentication**: Admin Required
+
+**Query Parameters**:
+- `date` (required): `YYYY-MM-DD`.
+
+**Response (200)**:
+```json
+{
+  "data": {
+    "earnings": 5000,
+    "currency": "INR",
+    "date": "2026-01-16"
+  }
+}
+```
+
+---
+
 ### Utilities (`src/utils/`)
 
 - `timezone.js` - IST timezone helpers:

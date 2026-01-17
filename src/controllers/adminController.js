@@ -775,26 +775,6 @@ exports.deleteMenuItem = async (req, res) => {
 exports.createWeeklyMenu = async (req, res) => {
   console.log("[AdminController] createWeeklyMenu", req.body);
   try {
-    // New Payload Structure:
-    // {
-    //    weekStartDate: "YYYY-MM-DD",
-    //    variants: [ { dietType, cuisineType, tier } ], // Array of targets
-    //    days: [
-    //      {
-    //        dayOfWeek: 1,
-    //        meals: [
-    //          { type: 'TIFFIN', items: [ { menuItemId: "uuid", categoryId: "uuid" } ] }
-    //        ]
-    //      }
-    //    ]
-    // }
-
-    // Simplification for MVP as per prompt:
-    // user selects variant (veg, north, basic) -> creates menu.
-    // "creates menu for all variants at once or only one at once"
-
-    // Let's support the 'variants' array.
-
     const { weekStartDate, variants, days } = req.body;
 
     if (!weekStartDate || !variants || !days) {
@@ -803,79 +783,100 @@ exports.createWeeklyMenu = async (req, res) => {
         .json({ error: { message: "Missing required fields" } });
     }
 
+    // 1. Pre-fetch all MenuItem names to avoid N+1 queries inside transaction
+    const allMenuItemIds = new Set();
+    days.forEach((day) => {
+      day.meals.forEach((meal) => {
+        meal.items.forEach((item) => {
+          if (item.menuItemId) allMenuItemIds.add(item.menuItemId);
+        });
+      });
+    });
+
+    const menuItems = await prisma.menuItem.findMany({
+      where: { id: { in: Array.from(allMenuItemIds) } },
+      select: { id: true, name: true },
+    });
+
+    const menuItemMap = new Map();
+    menuItems.forEach((item) => menuItemMap.set(item.id, item.name));
+
     const createdMenus = [];
 
-    await prisma.$transaction(async (tx) => {
-      for (const variant of variants) {
-        const { dietType, cuisineType, tier } = variant;
+    await prisma.$transaction(
+      async (tx) => {
+        for (const variant of variants) {
+          const { dietType, cuisineType, tier } = variant;
 
-        // Normalize start date to Monday to match fetch logic
-        // We set hour to 12 (Noon) to avoid timezone/UTC truncation issues (Monday 00:00 IST -> Sunday 18:30 UTC)
-        const normalizedWeekStart = moment(weekStartDate)
-          .tz("Asia/Kolkata")
-          .startOf("isoWeek")
-          .hour(12)
-          .toDate();
+          // Normalize start date to Monday 12:00
+          const normalizedWeekStart = moment(weekStartDate)
+            .tz("Asia/Kolkata")
+            .startOf("isoWeek")
+            .hour(12)
+            .toDate();
 
-        // 1. Find or Create the WeeklyMenu container
-        // Using upsert to handle the "Unique constraint failed" error
-        const menu = await tx.weeklyMenu.upsert({
-          where: {
-            dietType_cuisineType_tier_weekStartDate: {
+          // 2. Find or Create the WeeklyMenu container
+          const menu = await tx.weeklyMenu.upsert({
+            where: {
+              dietType_cuisineType_tier_weekStartDate: {
+                dietType,
+                cuisineType,
+                tier: tier || "REGULAR",
+                weekStartDate: normalizedWeekStart,
+              },
+            },
+            update: {},
+            create: {
               dietType,
               cuisineType,
               tier: tier || "REGULAR",
               weekStartDate: normalizedWeekStart,
             },
-          },
-          update: {}, // Don't change if exists, just get ID to update items
-          create: {
-            dietType,
-            cuisineType,
-            tier: tier || "REGULAR",
-            weekStartDate: normalizedWeekStart,
-          },
-        });
+          });
 
-        createdMenus.push(menu);
+          createdMenus.push(menu);
 
-        // 2. Wipe existing items for this menu to ensure clean state (optional but safer for "re-creation")
-        await tx.weeklyMenuItem.deleteMany({
-          where: { weeklyMenuId: menu.id },
-        });
+          // 3. Wipe existing items
+          await tx.weeklyMenuItem.deleteMany({
+            where: { weeklyMenuId: menu.id },
+          });
 
-        // 3. Create new items
-        for (const day of days) {
-          for (const meal of day.meals) {
-            // meal: { type: 'LUNCH', items: [...] }
-            for (const item of meal.items) {
-              // item: { menuItemId, nameOverride? }
-              // If menuItemId provided, fetch name. Else use manual name.
+          // 4. Prepare data for Batch Creation
+          const menuItemsToCreate = [];
 
-              let itemName = item.name;
-              let menuItemId = item.menuItemId;
+          for (const day of days) {
+            for (const meal of day.meals) {
+              for (const item of meal.items) {
+                const menuItemId = item.menuItemId;
+                // Use fetched name or fallback to provided name or "Unknown"
+                const itemName =
+                  (menuItemId ? menuItemMap.get(menuItemId) : item.name) ||
+                  item.name ||
+                  "Unknown Item";
 
-              if (menuItemId) {
-                const dbItem = await tx.menuItem.findUnique({
-                  where: { id: menuItemId },
-                });
-                if (dbItem) itemName = dbItem.name;
-              }
-
-              await tx.weeklyMenuItem.create({
-                data: {
+                menuItemsToCreate.push({
                   weeklyMenuId: menu.id,
                   dayOfWeek: day.dayOfWeek,
-                  mealType: meal.type, // TIFFIN, LUNCH
+                  mealType: meal.type,
                   menuItemId: menuItemId,
-                  itemName: itemName || "Unknown Item", // Fallback
-                },
-              });
+                  itemName: itemName,
+                });
+              }
             }
           }
+
+          // 5. Bulk Insert
+          if (menuItemsToCreate.length > 0) {
+            await tx.weeklyMenuItem.createMany({
+              data: menuItemsToCreate,
+            });
+          }
         }
+      },
+      {
+        timeout: 10000, // Increase timeout slightly to be safe, though batching should make it fast
       }
-    });
+    );
 
     res.status(201).json({
       data: { count: createdMenus.length, ids: createdMenus.map((m) => m.id) },
@@ -888,12 +889,97 @@ exports.createWeeklyMenu = async (req, res) => {
 };
 
 exports.updateWeeklyMenu = async (req, res) => {
-  // Ideally this should support full replace or patch
+  console.log("[AdminController] updateWeeklyMenu", req.params, req.body);
   try {
     const { id } = req.params;
-    // ... logic to update menu ...
-    res.status(501).json({ error: { message: "Not implemented yet" } });
+    const { days } = req.body; // Expecting structure similar to create: { days: [ { dayOfWeek, meals: [ { type, items: [ { menuItemId } ] } ] } ] }
+
+    if (!days || !Array.isArray(days)) {
+      return res
+        .status(400)
+        .json({ error: { message: "Days array is required" } });
+    }
+
+    // 1. Check if menu exists
+    const existingMenu = await prisma.weeklyMenu.findUnique({ where: { id } });
+    if (!existingMenu) {
+      return res.status(404).json({ error: { message: "Menu not found" } });
+    }
+
+    // 2. Pre-fetch MenuItem names
+    const allMenuItemIds = new Set();
+    days.forEach((day) => {
+      if (day.meals) {
+        day.meals.forEach((meal) => {
+          if (meal.items) {
+            meal.items.forEach((item) => {
+              if (item.menuItemId) allMenuItemIds.add(item.menuItemId);
+            });
+          }
+        });
+      }
+    });
+
+    const menuItems = await prisma.menuItem.findMany({
+      where: { id: { in: Array.from(allMenuItemIds) } },
+      select: { id: true, name: true },
+    });
+
+    const menuItemMap = new Map();
+    menuItems.forEach((item) => menuItemMap.set(item.id, item.name));
+
+    await prisma.$transaction(async (tx) => {
+      // 3. Wipe existing items for this menu
+      await tx.weeklyMenuItem.deleteMany({
+        where: { weeklyMenuId: id },
+      });
+
+      // 4. Create new items
+      const menuItemsToCreate = [];
+
+      for (const day of days) {
+        if (!day.meals) continue;
+        for (const meal of day.meals) {
+          if (!meal.items) continue;
+          for (const item of meal.items) {
+            const menuItemId = item.menuItemId;
+            const itemName =
+              (menuItemId ? menuItemMap.get(menuItemId) : item.name) ||
+              item.name ||
+              "Unknown Item";
+
+            menuItemsToCreate.push({
+              weeklyMenuId: id,
+              dayOfWeek: day.dayOfWeek,
+              mealType: meal.type,
+              menuItemId: menuItemId,
+              itemName: itemName,
+            });
+          }
+        }
+      }
+
+      if (menuItemsToCreate.length > 0) {
+        await tx.weeklyMenuItem.createMany({
+          data: menuItemsToCreate,
+        });
+      }
+    });
+
+    // 5. Fetch updated menu to return
+    const updatedMenu = await prisma.weeklyMenu.findUnique({
+      where: { id },
+      include: {
+        items: true,
+      },
+    });
+
+    res.json({
+      data: { menu: updatedMenu },
+      message: "Weekly menu updated successfully",
+    });
   } catch (error) {
+    console.error("Update Weekly Menu Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };
@@ -1492,6 +1578,246 @@ exports.rejectPaymentProof = async (req, res) => {
     res.json({ message: "Payment rejected" });
   } catch (error) {
     console.error("Reject Payment Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+// --- Order Management ---
+
+exports.getOrderStats = async (req, res) => {
+  console.log("[AdminController] getOrderStats", req.query);
+  try {
+    const { date } = req.query; // YYYY-MM-DD
+    if (!date) {
+      return res.status(400).json({ error: { message: "Date is required" } });
+    }
+
+    const startOfDay = moment.tz(date, "Asia/Kolkata").startOf("day").toDate();
+    const endOfDay = moment.tz(date, "Asia/Kolkata").endOf("day").toDate();
+
+    // Fetch all meals for the day with inclusions
+    const meals = await prisma.subscriptionMeal.findMany({
+      where: {
+        serviceDate: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        isPaused: false, // Only active meals
+      },
+      include: {
+        subscription: {
+          include: {
+            mealPackage: true,
+          },
+        },
+      },
+    });
+
+    // Aggregate
+    const aggregation = {};
+
+    meals.forEach((meal) => {
+      const pkg = meal.subscription.mealPackage;
+      const key =
+        `${pkg.tier}_${pkg.dietType}_${pkg.cuisineType}`.toLowerCase(); // e.g., basic_veg_north
+
+      if (!aggregation[key]) {
+        aggregation[key] = {
+          tier: pkg.tier,
+          dietType: pkg.dietType,
+          cuisineType: pkg.cuisineType,
+          count: 0,
+        };
+      }
+      aggregation[key].count += 1;
+    });
+
+    res.json({ data: { stats: Object.values(aggregation) } });
+  } catch (error) {
+    console.error("Get Order Stats Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.getUsersWithOrders = async (req, res) => {
+  console.log("[AdminController] getUsersWithOrders", req.query);
+  try {
+    const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ error: { message: "Date is required" } });
+    }
+
+    const startOfDay = moment.tz(date, "Asia/Kolkata").startOf("day").toDate();
+    const endOfDay = moment.tz(date, "Asia/Kolkata").endOf("day").toDate();
+
+    // Find meals for the date
+    const meals = await prisma.subscriptionMeal.findMany({
+      where: {
+        serviceDate: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        isPaused: false,
+      },
+      include: {
+        subscription: {
+          include: {
+            user: {
+              include: {
+                addresses: true, // Need address details if not on meal
+              },
+            },
+            mealPackage: true,
+          },
+        },
+        address: true, // Specific address for this meal if multiple
+        deliverySlot: true,
+      },
+      orderBy: {
+        createdAt: "asc", // or grouped by user
+      },
+    });
+
+    // Group by User to show a list of users
+    const userMap = new Map();
+
+    meals.forEach((meal) => {
+      const user = meal.subscription.user;
+      if (!userMap.has(user.id)) {
+        userMap.set(user.id, {
+          userId: user.id,
+          name: user.name,
+          phoneNumber: user.phoneNumber,
+          email: user.email,
+          meals: [],
+        });
+      }
+
+      const userEntry = userMap.get(user.id);
+
+      userEntry.meals.push({
+        mealId: meal.id,
+        mealType: meal.mealType,
+        status: meal.status,
+        pkgName: meal.subscription.mealPackage.name,
+        tier: meal.subscription.mealPackage.tier,
+        diet: meal.subscription.mealPackage.dietType,
+        deliverySlot: meal.deliverySlot
+          ? `${moment(meal.deliverySlot.startTime).format("HH:mm")} - ${moment(
+              meal.deliverySlot.endTime
+            ).format("HH:mm")}`
+          : "N/A",
+        address:
+          meal.address ||
+          user.addresses.find((a) => a.id === meal.subscription.addressId) ||
+          user.addresses[0], // Fallback
+      });
+    });
+
+    res.json({ data: { users: Array.from(userMap.values()) } });
+  } catch (error) {
+    console.error("Get Users With Orders Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.getUserDeliveryDetails = async (req, res) => {
+  console.log("[AdminController] getUserDeliveryDetails", req.params);
+  try {
+    const { id } = req.params; // User ID
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: {
+        addresses: { include: { commonPoint: true } },
+        subscriptions: {
+          where: { status: "ACTIVE" }, // Show active subscriptions mainly
+          include: {
+            mealPackage: true,
+            meals: {
+              where: {
+                serviceDate: {
+                  gte: moment().subtract(7, "days").toDate(), // Last 7 days + future
+                },
+              },
+              orderBy: { serviceDate: "desc" },
+              take: 20,
+            },
+          },
+        },
+        curryOrders: {
+          take: 5,
+          orderBy: { orderDate: "desc" },
+          include: { wallet: true },
+        },
+      },
+    });
+
+    if (!user)
+      return res.status(404).json({ error: { message: "User not found" } });
+
+    res.json({ data: { user } });
+  } catch (error) {
+    console.error("Get User Details Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.updateMealStatus = async (req, res) => {
+  console.log("[AdminController] updateMealStatus", req.params, req.body);
+  try {
+    const { id } = req.params; // Meal ID (SubscriptionMeal ID)
+    const { status } = req.body;
+
+    if (!status)
+      return res.status(400).json({ error: { message: "Status is required" } });
+
+    const normalizedStatus = status.toUpperCase().replace(/\s+/g, "_");
+
+    const meal = await prisma.subscriptionMeal.update({
+      where: { id },
+      data: { status: normalizedStatus },
+    });
+
+    res.json({ data: { meal }, message: "Status updated" });
+  } catch (error) {
+    console.error("Update Meal Status Error:", error);
+    res.status(500).json({ error: { message: "Internal Server Error" } });
+  }
+};
+
+exports.getDailyEarnings = async (req, res) => {
+  console.log("[AdminController] getDailyEarnings", req.query);
+  try {
+    const { date } = req.query;
+    if (!date)
+      return res.status(400).json({ error: { message: "Date required" } });
+
+    const startOfDay = moment.tz(date, "Asia/Kolkata").startOf("day").toDate();
+    const endOfDay = moment.tz(date, "Asia/Kolkata").endOf("day").toDate();
+
+    const payments = await prisma.paymentProof.aggregate({
+      _sum: {
+        amount: true,
+      },
+      where: {
+        verifiedAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        status: "VERIFIED",
+      },
+    });
+
+    res.json({
+      data: {
+        earnings: payments._sum.amount || 0,
+        currency: "INR",
+        date: date,
+      },
+    });
+  } catch (error) {
+    console.error("Get Earnings Error:", error);
     res.status(500).json({ error: { message: "Internal Server Error" } });
   }
 };

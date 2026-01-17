@@ -251,6 +251,7 @@ model SubscriptionMeal {
   deliveryGroup   DeliveryGroup?    @relation(fields: [deliveryGroupId], references: [id])
   deliverySlot    DeliveryTimeSlot? @relation(fields: [deliverySlotId], references: [id])
   subscription    Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  status          String            @default("PENDING") @db.VarChar(20)
 
   @@unique([subscriptionId, serviceDate, mealType])
   @@map("subscription_meals")
