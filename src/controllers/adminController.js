@@ -357,7 +357,7 @@ exports.createMealPackage = async (req, res) => {
             data: {
               mealPackageId: mp.id,
               name: `${item.durationDays} Days - ${item.mealsIncluded.join(
-                "+"
+                "+",
               )}`, // Auto-gen name or accept from input
               durationDays: parseInt(item.durationDays),
               mealsIncluded: item.mealsIncluded,
@@ -417,7 +417,6 @@ exports.updateMealPackage = async (req, res) => {
     });
 
     // 2. Handle Pricings (Upsert Logic)
-    // We match incoming pricings to existing ones based on "Signature": Duration + Sorted Meals
     if (pricings && Array.isArray(pricings)) {
       const existingPricings = mealPackage.pricingOptions;
 
@@ -426,14 +425,33 @@ exports.updateMealPackage = async (req, res) => {
 
         const duration = parseInt(p.durationDays);
         const meals = Array.isArray(p.mealsIncluded) ? p.mealsIncluded : [];
-        const sortedMeals = [...meals].sort().join(","); // Signature key
+        const sortedMeals = [...meals].sort().join(",");
+        const serviceDays = Array.isArray(p.allowedServiceDays)
+          ? [...p.allowedServiceDays].sort().join(",")
+          : ""; // Signature key component
         const price = parseFloat(p.price);
 
-        // Find match
-        const match = existingPricings.find((ep) => {
-          const epMeals = [...ep.mealsIncluded].sort().join(",");
-          return ep.durationDays === duration && epMeals === sortedMeals;
-        });
+        let match;
+
+        // A. Try matching by ID first (most robust)
+        if (p.id) {
+          match = existingPricings.find((ep) => ep.id === p.id);
+        }
+
+        // B. If no ID or not found, try matching by Signature (Duration + Meals + ServiceDays)
+        if (!match) {
+          match = existingPricings.find((ep) => {
+            const epMeals = [...ep.mealsIncluded].sort().join(",");
+            const epServiceDays = Array.isArray(ep.allowedServiceDays)
+              ? [...ep.allowedServiceDays].sort().join(",")
+              : "";
+            return (
+              ep.durationDays === duration &&
+              epMeals === sortedMeals &&
+              epServiceDays === serviceDays
+            );
+          });
+        }
 
         if (match) {
           // UPDATE Existing
@@ -441,10 +459,12 @@ exports.updateMealPackage = async (req, res) => {
             where: { id: match.id },
             data: {
               price: price,
-              name: `${duration} Days - ${meals.join("+")}`, // Refresh name
+              name: `${duration} Days - ${meals.join("+")}${
+                serviceDays ? " (Filtered Days)" : ""
+              }`, // Refresh name
               allowedServiceDays: Array.isArray(p.allowedServiceDays)
                 ? p.allowedServiceDays
-                : match.allowedServiceDays, // Update if provided, else keep existing? OR overwrite. better overwrite if we want full edit.
+                : match.allowedServiceDays,
               isActive: p.isActive !== undefined ? p.isActive : true,
             },
           });
@@ -453,7 +473,9 @@ exports.updateMealPackage = async (req, res) => {
           await prisma.packagePricing.create({
             data: {
               mealPackageId: id,
-              name: `${duration} Days - ${meals.join("+")}`,
+              name: `${duration} Days - ${meals.join("+")}${
+                serviceDays ? " (Filtered Days)" : ""
+              }`,
               durationDays: duration,
               mealsIncluded: meals,
               allowedServiceDays: Array.isArray(p.allowedServiceDays)
@@ -875,7 +897,7 @@ exports.createWeeklyMenu = async (req, res) => {
       },
       {
         timeout: 10000, // Increase timeout slightly to be safe, though batching should make it fast
-      }
+      },
     );
 
     res.status(201).json({
@@ -1371,7 +1393,7 @@ exports.verifyPaymentProof = async (req, res) => {
         // we shift it to tomorrow.
         if (originalStart.isBefore(tomorrow)) {
           console.log(
-            `[Verification] Late Verification. Shifting start date from ${originalStart.format()} to ${tomorrow.format()}`
+            `[Verification] Late Verification. Shifting start date from ${originalStart.format()} to ${tomorrow.format()}`,
           );
           const duration = subscription.pricing.durationDays;
           startToUse = tomorrow;
@@ -1704,7 +1726,7 @@ exports.getUsersWithOrders = async (req, res) => {
         diet: meal.subscription.mealPackage.dietType,
         deliverySlot: meal.deliverySlot
           ? `${moment(meal.deliverySlot.startTime).format("HH:mm")} - ${moment(
-              meal.deliverySlot.endTime
+              meal.deliverySlot.endTime,
             ).format("HH:mm")}`
           : "N/A",
         address:
