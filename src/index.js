@@ -76,4 +76,8 @@ if (require.main === module) {
   });
 }
 
+// Initialize Cron Scheduler
+const initScheduler = require("./cron/mealStatusScheduler");
+initScheduler();
+
 module.exports = app;
